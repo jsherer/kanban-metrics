@@ -1,0 +1,6 @@
+matplotlib
+pandas
+seaborn
+lifelines
+requests
+requests-cache
