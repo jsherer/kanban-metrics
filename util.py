@@ -18,7 +18,7 @@ def prep_libs():
     plt.rcParams['lines.linewidth'] = 1.5
 
     barblue = plt.rcParams['axes.prop_cycle'].by_key()['color'][0]
-    plt.rcParams['text.color'] = darkgrey
-    plt.rcParams['axes.labelcolor'] = darkgrey
-    plt.rcParams['xtick.color'] = lightgrey
-    plt.rcParams['ytick.color'] = lightgrey
+    #plt.rcParams['text.color'] = darkgrey
+    #plt.rcParams['axes.labelcolor'] = darkgrey
+    #plt.rcParams['xtick.color'] = lightgrey
+    #plt.rcParams['ytick.color'] = lightgrey
