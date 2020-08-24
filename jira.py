@@ -97,9 +97,14 @@ def yield_changelog_all(client, issue_id, batch=100):
                 yield result
                 fetched += 1
 
-def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, use_get=False):
+def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, updates_only=False, use_get=False):
+    jql = 'project = {} AND created >= "{}" ORDER BY created ASC'.format(project_key, since)
+    
+    if updates_only:
+        jql = 'project = {} AND updated >= "{}" ORDER BY created ASC'.format(project_key, since)
+        
     payload = {
-      'jql': 'project = {} AND created >= "{}" ORDER BY created ASC'.format(project_key, since),
+      'jql': jql,
       'fieldsByKeys': False,
       'fields': [
         'parent',
@@ -136,12 +141,12 @@ def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, u
 
     return json.loads(response.text)
 
-def yield_issues_all(client, project_key, since='2020-01-01', batch=100, use_get=False):
-    issues_count = fetch_issues(client, project_key, since, start=0, limit=0, use_get=use_get)
+def yield_issues_all(client, project_key, since='2020-01-01', batch=100, updates_only=False, use_get=False):
+    issues_count = fetch_issues(client, project_key, since=since, start=0, limit=0, updates_only=updates_only, use_get=use_get)
     total = issues_count.get('total', 0)
     fetched = 0
     while fetched < total:
-        j = fetch_issues(client, project_key, since=since, start=fetched, limit=batch, use_get=use_get)
+        j = fetch_issues(client, project_key, since=since, start=fetched, limit=batch, updates_only=updates_only, use_get=use_get)
         if not j:
             break
         k = j.get('issues', [])
@@ -151,7 +156,7 @@ def yield_issues_all(client, project_key, since='2020-01-01', batch=100, use_get
             yield result
             fetched += 1
 
-def fetch(client, project_key, since='2020-01-01'):
+def fetch(client, project_key, since='2020-01-01', updates_only=False):
     logging.info('fetching project {} since {}...'.format(project_key, since))
     
     categories = fetch_status_categories_all(client)
@@ -167,7 +172,7 @@ def fetch(client, project_key, since='2020-01-01'):
     for status in statuses:
         status_categories_by_status_id[int(status.get('id'))] = categories_by_category_id[status.get('statusCategory', {}).get('id')]
     
-    issues = yield_issues_all(client, project_key, since=since, use_get=True)
+    issues = yield_issues_all(client, project_key, since=since, updates_only=updates_only, use_get=True)
     
     for issue in issues:
         logging.info('fetching issue {}...'.format(issue.get('key')))
@@ -227,7 +232,7 @@ def fetch(client, project_key, since='2020-01-01'):
             yield row
 
 
-def generate_csv(client, csv_file, project_key, since='2020-01-01'):
+def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only=False):
     fieldnames = [
         'project_id',
         'project_key',
@@ -255,7 +260,7 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01'):
     writer.writeheader()
     
     count = 0
-    for record in fetch(client, project_key, since=since):
+    for record in fetch(client, project_key, since=since, updates_only=updates_only):
         for key, value in record.items():
             # ensure ISO datetime strings with TZ offsets to ISO datetime strings in UTC
             if 'date' in key and value and not isinstance(value, datetime.datetime):
@@ -278,8 +283,11 @@ def main():
     apikey = os.getenv('JIRA_APIKEY', '')
 
     parser = argparse.ArgumentParser(description='Extract issue changelog data from a Jira Project')
-    parser.add_argument('project', help='project from which to extract issues')
-    parser.add_argument('since', help='date from which to start extracting issues (yyyy-mm-dd)')
+    parser.add_argument('project', help='Jira project from which to extract issues')
+    parser.add_argument('since', help='Date from which to start extracting issues (yyyy-mm-dd)')
+    parser.add_argument('--updates-only', action='store_true', help='''
+        When passed, instead of extracting issues created since the since argument,
+        only issues *updated* since the since argument will be extracted.''')
     parser.add_argument('-d', '--domain', default=domain, help='Jira project domain url (i.e., https://company.atlassian.net). Can also be provided via JIRA_DOMAIN environment variable.')
     parser.add_argument('-e', '--email',  default=email,  help='Jira user email address for authentication. Can also be provided via JIRA_EMAIL environment variable.')
     parser.add_argument('-k', '--apikey', default=apikey, help='Jira user api key for authentication. Can also be provided via JIRA_APIKEY environment variable.')
@@ -295,7 +303,7 @@ def main():
     
     with open(args.output, 'w', newline='') as csv_file:
         logging.info('{} opened for writing...'.format(args.output))
-        generate_csv(client, csv_file, args.project, since=args.since)
+        generate_csv(client, csv_file, args.project, updates_only=args.updates_only, since=args.since)
 
 
 if __name__ == '__main__':
