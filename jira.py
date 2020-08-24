@@ -17,7 +17,6 @@ import csv
 import json
 import logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 
 class Client:
@@ -45,24 +44,28 @@ class Client:
 def fetch_status_categories_all(client):
     response = requests.get(client.url('/rest/api/3/statuscategory'), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
+        logging.warning('could not fetch status categories')
         return {}
     return json.loads(response.text)
 
 def fetch_statuses_all(client):
     response = requests.get(client.url('/rest/api/3/status'), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
+        logging.warning('could not fetch statuses')
         return {}
     return json.loads(response.text)
 
 def fetch_statuses_by_project(client, project_key):
     response = requests.get(client.url('/rest/api/3/project/{}/statuses'.format(project_key)), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
+        logging.warning('could not fetch project {} statuses'.format(project_key))
         return {}
     return json.loads(response.text)
 
 def fetch_project(client, project_key):
     response = requests.get(client.url('/rest/api/3/project/{}'.format(project_key)), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
+        logging.warning('could not fetch project {}'.format(project_key))
         return {}
     return json.loads(response.text)
 
@@ -70,6 +73,7 @@ def fetch_changelog(client, issue_id, start=0, limit=10):
     params={'startAt': start, 'maxResults': limit}
     response = requests.request('GET', client.url('/rest/api/3/issue/{}/changelog'.format(issue_id)), params=params, auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
+        logging.warning('could not fetch changelog for issue {}'.format(issue_id))
         return {}
     return json.loads(response.text)
 
@@ -127,6 +131,7 @@ def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, u
         )
     
     if response.status_code != 200:
+        logging.warning('could not fetch issues since {}'.format(since))
         return {}
 
     return json.loads(response.text)
@@ -278,9 +283,13 @@ def main():
     parser.add_argument('-d', '--domain', default=domain, help='Jira project domain url (i.e., https://company.atlassian.net). Can also be provided via JIRA_DOMAIN environment variable.')
     parser.add_argument('-e', '--email',  default=email,  help='Jira user email address for authentication. Can also be provided via JIRA_EMAIL environment variable.')
     parser.add_argument('-k', '--apikey', default=apikey, help='Jira user api key for authentication. Can also be provided via JIRA_APIKEY environment variable.')
-    parser.add_argument('-o', '--output', default='out.csv', help='Output CSV file')
+    parser.add_argument('-o', '--output', default='out.csv', help='File to store the csv output.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Be verbose and output progress to console.')
     
     args = parser.parse_args()
+    
+    if args.verbose:
+        logging.basicConfig(level=logging.INFO)
     
     client = Client(args.domain, email=args.email, apikey=args.apikey)
     
