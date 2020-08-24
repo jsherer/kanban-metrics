@@ -1,4 +1,6 @@
 matplotlib
+dateutil
+pytz
 pandas
 seaborn
 lifelines
