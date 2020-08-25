@@ -2,22 +2,43 @@
 <title>Dashboard</title>
 <head>
     <style type="text/css">
-    body { padding:1em; text-align:center; }
-    img { max-width:75%; }
+    h1, h2, h3 { margin-top:2em; margin-bottom:0; padding-bottom:0.5em; font-family:sans-serif; }
+    body { padding:1em; }
+    div { max-width:50%; }
+    p { text-align:center; }
+    img { display:inline-block; max-width:100%; }
     </style>
 </head>
 <body>
-    <h1>Metrics</h1>
-    <img src="images/cycletime-timeline.png" alt="" />
-    <img src="images/cycletime-histogram.png" alt="" />
-    <img src="images/throughput-timeline.png" alt="" />
-    <img src="images/throughput-histogram.png" alt="" />
-    <img src="images/burndown-timeline.png" alt="" />
-    <img src="images/flow-timeline.png" alt="" />
-    <img src="images/wip-aging.png" alt="" />
-    <img src="images/forecast-kaplan-meier.png" alt="" />
-    <img src="images/distribution-montecarlo-how.png" alt="" />
-    <img src="images/forecast-montecarlo-how.png" alt="" />
-    <img src="images/distribution-montecarlo-when.png" alt="" />
-    <img src="images/forecast-montecarlo-when.png" alt="" />
+    <h1>Kanban Metrics</h1>
+    <div>
+        <h2>Cycle Time</h2>
+        <p>
+            <img src="images/cycletime-timeline.png" alt="" />
+            <img src="images/cycletime-histogram.png" alt="" />
+        </p>
+        
+        <h2>Throughput</h2>
+        <p>
+            <img src="images/throughput-timeline.png" alt="" />
+            <img src="images/throughput-histogram.png" alt="" />
+        </p>
+        
+        <h2>Flow</h2>
+        <p>    
+            <img src="images/burndown-timeline.png" alt="" />
+            <img src="images/flow-timeline.png" alt="" />
+            <img src="images/flow-normalized-timeline.png" alt="" />
+            <img src="images/wip-aging.png" alt="" />
+        </p>
+        
+        <h2>Forecasts</h2>
+        <p>
+            <img src="images/forecast-kaplan-meier.png" alt="" />
+            <img src="images/distribution-montecarlo-how.png" alt="" />
+            <img src="images/forecast-montecarlo-how.png" alt="" />
+            <img src="images/distribution-montecarlo-when.png" alt="" />
+            <img src="images/forecast-montecarlo-when.png" alt="" />
+        </p>
+    </div>
 </body>
