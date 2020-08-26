@@ -1,18 +1,31 @@
 # Kanban Metrics
 
+This is an experimental [Jupyter notebook](kanban.ipynb) using Jira issue changelogs to:
+
+1. load a historical record of a Kanban
+2. create graphs some key Kanban metrics
+3. use these metrics to run a Kaplan-Meier survivability model and a Monte Carlo simulation
+
+This allows us to use data forecasting (instead of gut estimation) to gauge:
+
+* how likely will a single issue be completed in N days
+* how much work a team can take on over the next N days
+* and by what date N number of work items could be completed
+
+
 ## Setup
 
 ```
 pip install -r requirements.txt
 ```
 
-## Fetching Data
+## Fetching Data from Jira
 
 ```
 python jira.py [project_key] [since_date]
 ```
 
-## Analyzing Data
+## Analyzing Data in Jupyter
 
 ```
 jupyter lab
