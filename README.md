@@ -3,7 +3,7 @@
 This is an experimental [Jupyter notebook](kanban.ipynb) using Jira issue changelogs to:
 
 1. load a historical record of a Kanban
-2. create graphs some key Kanban metrics
+2. create graphs for key Kanban metrics (cycletime, throughput, flow, etc)
 3. use these metrics to run a Kaplan-Meier survivability model and a Monte Carlo simulation
 
 This allows us to use data forecasting (instead of gut estimation) to gauge:
