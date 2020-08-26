@@ -33,7 +33,7 @@ jupyter lab
 
 ## Examples:
 
-Generated from an example Jira project and data loaded from [example.csv](data/example.csv):
+Generated from an example Jira project and data loaded from [example.csv](data/example.csv) on 2020-08-25 covering the previous 90 days:
        
 ![](images/cycletime-timeline.png)
 ![](images/cycletime-histogram.png)
