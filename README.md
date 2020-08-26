@@ -30,3 +30,19 @@ python jira.py [project_key] [since_date]
 ```
 jupyter lab
 ```
+
+## Examples:
+       
+![](images/cycletime-timeline.png)
+![](images/cycletime-histogram.png)
+![](images/throughput-timeline.png)
+![](images/throughput-histogram.png)
+![](images/burndown-timeline.png)
+![](images/flow-timeline.png)
+![](images/flow-normalized-timeline.png)
+![](images/wip-aging.png)
+![](images/forecast-kaplan-meier.png)
+![](images/distribution-montecarlo-how.png)
+![](images/forecast-montecarlo-how.png)
+![](images/distribution-montecarlo-when.png)
+![](images/forecast-montecarlo-when.png)
