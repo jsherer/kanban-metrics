@@ -159,19 +159,23 @@ def yield_issues_all(client, project_key, since='2020-01-01', batch=100, updates
 def fetch(client, project_key, since='2020-01-01', updates_only=False):
     logging.info('fetching project {} since {}...'.format(project_key, since))
     
-    categories = fetch_status_categories_all(client)
+    # get high level information fresh every time
+    with requests_cache.disabled():
+        categories = fetch_status_categories_all(client)
+        statuses = fetch_statuses_all(client)
+        project = fetch_project(client, project_key)
+        project_statuses = fetch_statuses_by_project(client, project_key) 
+
+    # compute lookup tables
     categories_by_category_id = {}
     for category in categories:
         categories_by_category_id[category.get('id')] = category
-    
-    statuses = fetch_statuses_all(client)
-    project = fetch_project(client, project_key)
-    project_statuses = fetch_statuses_by_project(client, project_key) 
 
     status_categories_by_status_id = {}
     for status in statuses:
         status_categories_by_status_id[int(status.get('id'))] = categories_by_category_id[status.get('statusCategory', {}).get('id')]
-    
+
+    # fetch issues!
     issues = yield_issues_all(client, project_key, since=since, updates_only=updates_only, use_get=True)
     
     for issue in issues:
@@ -197,8 +201,8 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
             
             for record in changeset.get('items', []):
                 if record.get('field') == 'status':
-                    from_category = status_categories_by_status_id[int(record.get('from'))]
-                    to_category = status_categories_by_status_id[int(record.get('to'))]
+                    from_category = status_categories_by_status_id.get(int(record.get('from')), {})
+                    to_category = status_categories_by_status_id.get(int(record.get('to')), {})
                     
                     row = dict(prefix)
                     row.update({
@@ -232,7 +236,7 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
             yield row
 
 
-def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only=False):
+def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only=False, write_header=False):
     fieldnames = [
         'project_id',
         'project_key',
@@ -257,7 +261,9 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only
     import pytz
 
     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-    writer.writeheader()
+    
+    if write_header:
+        writer.writeheader()
     
     count = 0
     for record in fetch(client, project_key, since=since, updates_only=updates_only):
@@ -288,6 +294,7 @@ def main():
     parser.add_argument('--updates-only', action='store_true', help='''
         When passed, instead of extracting issues created since the since argument,
         only issues *updated* since the since argument will be extracted.''')
+    parser.add_argument('--append', action='store_true', help='Append to the output file instead of overwriting it.')
     parser.add_argument('-d', '--domain', default=domain, help='Jira project domain url (i.e., https://company.atlassian.net). Can also be provided via JIRA_DOMAIN environment variable.')
     parser.add_argument('-e', '--email',  default=email,  help='Jira user email address for authentication. Can also be provided via JIRA_EMAIL environment variable.')
     parser.add_argument('-k', '--apikey', default=apikey, help='Jira user api key for authentication. Can also be provided via JIRA_APIKEY environment variable.')
@@ -301,9 +308,11 @@ def main():
     
     client = Client(args.domain, email=args.email, apikey=args.apikey)
     
-    with open(args.output, 'w', newline='') as csv_file:
-        logging.info('{} opened for writing...'.format(args.output))
-        generate_csv(client, csv_file, args.project, updates_only=args.updates_only, since=args.since)
+    mode = 'a' if args.append else 'w' 
+    
+    with open(args.output, mode, newline='') as csv_file:
+        logging.info('{} opened for writing (mode: {})...'.format(args.output, mode))
+        generate_csv(client, csv_file, args.project, since=args.since, updates_only=args.updates_only, write_header=not args.append)
 
 
 if __name__ == '__main__':
