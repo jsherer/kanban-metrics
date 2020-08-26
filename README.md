@@ -32,6 +32,8 @@ jupyter lab
 ```
 
 ## Examples:
+
+Generated from an example Jira project and data loaded from [example.csv](data/example.csv):
        
 ![](images/cycletime-timeline.png)
 ![](images/cycletime-histogram.png)
