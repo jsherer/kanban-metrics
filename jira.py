@@ -97,23 +97,29 @@ def yield_changelog_all(client, issue_id, batch=100):
                 yield result
                 fetched += 1
 
-def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, updates_only=False, use_get=False):
+def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, custom_fields=None, updates_only=False, use_get=False):
     jql = 'project = {} AND created >= "{}" ORDER BY created ASC'.format(project_key, since)
     
     if updates_only:
         jql = 'project = {} AND updated >= "{}" ORDER BY created ASC'.format(project_key, since)
-        
-    payload = {
-      'jql': jql,
-      'fieldsByKeys': False,
-      'fields': [
+    
+    fields = [
         'parent',
         'summary',
         'status',
         'issuetype',
         'created',
         'updated'
-      ],
+    ]
+    
+    if custom_fields:
+        fields = fields + custom_fields
+    
+    payload = {
+      'jql': jql,
+      'fieldsByKeys': False,
+      'fields': fields,
+      'expand':'names',
       'startAt': start,
       'maxResults': limit,
     }
@@ -141,12 +147,12 @@ def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, u
 
     return json.loads(response.text)
 
-def yield_issues_all(client, project_key, since='2020-01-01', batch=100, updates_only=False, use_get=False):
-    issues_count = fetch_issues(client, project_key, since=since, start=0, limit=0, updates_only=updates_only, use_get=use_get)
+def yield_issues_all(client, project_key, since='2020-01-01', batch=100, custom_fields=None, updates_only=False, use_get=False):
+    issues_count = fetch_issues(client, project_key, since=since, start=0, limit=0, custom_fields=custom_fields, updates_only=updates_only, use_get=use_get)
     total = issues_count.get('total', 0)
     fetched = 0
     while fetched < total:
-        j = fetch_issues(client, project_key, since=since, start=fetched, limit=batch, updates_only=updates_only, use_get=use_get)
+        j = fetch_issues(client, project_key, since=since, start=fetched, limit=batch, custom_fields=custom_fields, updates_only=updates_only, use_get=use_get)
         if not j:
             break
         k = j.get('issues', [])
@@ -156,7 +162,7 @@ def yield_issues_all(client, project_key, since='2020-01-01', batch=100, updates
             yield result
             fetched += 1
 
-def fetch(client, project_key, since='2020-01-01', updates_only=False):
+def fetch(client, project_key, since='2020-01-01', custom_fields=None, updates_only=False):
     logging.info('fetching project {} since {}...'.format(project_key, since))
     
     # get high level information fresh every time
@@ -176,7 +182,7 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
         status_categories_by_status_id[int(status.get('id'))] = categories_by_category_id[status.get('statusCategory', {}).get('id')]
 
     # fetch issues!
-    issues = yield_issues_all(client, project_key, since=since, updates_only=updates_only, use_get=True)
+    issues = yield_issues_all(client, project_key, since=since, custom_fields=custom_fields, updates_only=updates_only, use_get=True)
     
     for issue in issues:
         logging.info('fetching issue {}...'.format(issue.get('key')))
@@ -192,7 +198,11 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
             'issue_type_name': issue.get('fields', {}).get('issuetype', {}).get('name'),
             'issue_title': issue.get('fields', {}).get('summary'),
             'issue_created_date': issue.get('fields', {}).get('created'),
-        }    
+        }
+        
+        suffix = {}
+        if custom_fields:
+            suffix = {k: issue.get('fields', {}).get(k) for k in custom_fields}
         
         changelog = yield_changelog_all(client, issue_id)
         has_status = False
@@ -215,6 +225,7 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
                         'status_to_category_name': to_category.get('name'),
                         'status_change_date': changeset.get('created'),
                     })
+                    row.update(suffix)
                     
                     yield row
                     
@@ -233,10 +244,11 @@ def fetch(client, project_key, since='2020-01-01', updates_only=False):
                 'status_to_category_name': None, # new?
                 'status_change_date': None
             })
+            row.update(suffix)
             yield row
 
 
-def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only=False, write_header=False):
+def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_fields=None, updates_only=False, write_header=False):
     fieldnames = [
         'project_id',
         'project_key',
@@ -255,6 +267,9 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only
         'status_to_category_name',
         'status_change_date',
     ]
+    
+    if custom_fields:
+        fieldnames.extend(custom_fields)
 
     import datetime
     import dateutil.parser
@@ -266,7 +281,7 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', updates_only
         writer.writeheader()
     
     count = 0
-    for record in fetch(client, project_key, since=since, updates_only=updates_only):
+    for record in fetch(client, project_key, since=since, custom_fields=custom_fields, updates_only=updates_only):
         for key, value in record.items():
             # ensure ISO datetime strings with TZ offsets to ISO datetime strings in UTC
             if 'date' in key and value and not isinstance(value, datetime.datetime):
@@ -301,6 +316,8 @@ def main():
     parser.add_argument('-o', '--output', default='out.csv', help='File to store the csv output.')
     parser.add_argument('-v', '--verbose', action='store_true', help='Be verbose and output progress to console.')
     
+    parser.add_argument('-f', '--field', metavar='FIELD_ID', action='append', help='Include one or more custom fields in the query by id.')
+    
     args = parser.parse_args()
     
     if args.verbose:
@@ -310,9 +327,15 @@ def main():
     
     mode = 'a' if args.append else 'w' 
     
+    custom_fields = [k if k.startswith('customfield') else f'customfield_{k}' for k in args.field]
+    
     with open(args.output, mode, newline='') as csv_file:
         logging.info('{} opened for writing (mode: {})...'.format(args.output, mode))
-        generate_csv(client, csv_file, args.project, since=args.since, updates_only=args.updates_only, write_header=not args.append)
+        generate_csv(client, csv_file, args.project,
+                     since=args.since,
+                     custom_fields=custom_fields,
+                     updates_only=args.updates_only,
+                     write_header=not args.append)
 
 
 if __name__ == '__main__':
