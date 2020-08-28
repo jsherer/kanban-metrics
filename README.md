@@ -45,7 +45,6 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/flow-normalized-timeline.png)
 ![](images/wip-aging.png)
 ![](images/forecast-kaplan-meier.png)
-![](images/forecast-weibull-hazard.png)
 ![](images/forecast-weibull-survival.png)
 ![](images/distribution-montecarlo-how.png)
 ![](images/forecast-montecarlo-how.png)
