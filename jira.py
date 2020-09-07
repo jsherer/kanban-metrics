@@ -327,7 +327,7 @@ def main():
     
     mode = 'a' if args.append else 'w' 
     
-    custom_fields = [k if k.startswith('customfield') else f'customfield_{k}' for k in args.field]
+    custom_fields = [k if k.startswith('customfield') else f'customfield_{k}' for k in args.field] if args.field else []
     
     with open(args.output, mode, newline='') as csv_file:
         logging.info('{} opened for writing (mode: {})...'.format(args.output, mode))
