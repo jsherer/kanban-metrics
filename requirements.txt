@@ -1,5 +1,5 @@
 matplotlib
-dateutil
+python-dateutil
 pytz
 pandas
 seaborn
