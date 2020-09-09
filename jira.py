@@ -1,10 +1,15 @@
 """
 
 This utility will use the Jira REST API to download a project's
-statuses, issues, and historical changelog data to be used in the 
+statuses, issues, and historical changelog data to be used in the
 Kanban metrics analysis instead of relying on a Looker query.
 
 """
+import argparse
+import csv
+import json
+import logging
+import os
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -12,44 +17,46 @@ from requests.auth import HTTPBasicAuth
 import requests_cache
 requests_cache.install_cache('jiracache', backend='sqlite', expire_after=24*60*60)
 
-import argparse
-import csv
-import json
-import logging
 logger = logging.getLogger(__name__)
 
 
 class Client:
+    """ simple wrapper for client data """
     domain = ''
     email = ''
     apikey = ''
-    
+
     def __init__(self, domain, email='', apikey=''):
         self.domain = domain
         self.email = email
         self.apikey = apikey
-    
+
     def url(self, path):
+        """ return a url prefixed with the domain """
         return self.domain + path
-    
+
     def auth(self):
+        """ return an auth object with the email and apikey """
         return HTTPBasicAuth(self.email, self.apikey)
-    
+
     def headers(self):
+        """ return the basic headers to send with requests """
         return {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         }
 
 def fetch_status_categories_all(client):
-    response = requests.get(client.url('/rest/api/3/statuscategory'), auth=client.auth(), headers=client.headers())
+    response = requests.get(client.url('/rest/api/3/statuscategory'),
+                            auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
         logging.warning('could not fetch status categories')
         return {}
     return json.loads(response.text)
 
 def fetch_statuses_all(client):
-    response = requests.get(client.url('/rest/api/3/status'), auth=client.auth(), headers=client.headers())
+    response = requests.get(client.url('/rest/api/3/status'),
+                            auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
         logging.warning('could not fetch statuses')
         return {}
@@ -301,9 +308,6 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_field
         
         
 def main():
-    import argparse
-    import os
-    
     domain = os.getenv('JIRA_DOMAIN', '')
     email  = os.getenv('JIRA_EMAIL', '')
     apikey = os.getenv('JIRA_APIKEY', '')
@@ -320,20 +324,27 @@ def main():
     parser.add_argument('-e', '--email',  default=email,  help='Jira user email address for authentication. Can also be provided via JIRA_EMAIL environment variable.')
     parser.add_argument('-k', '--apikey', default=apikey, help='Jira user api key for authentication. Can also be provided via JIRA_APIKEY environment variable.')
     parser.add_argument('-o', '--output', default='out.csv', help='File to store the csv output.')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Be verbose and output progress to console.')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only output warnings to console.')
     
     parser.add_argument('-f', '--field', metavar='FIELD_ID', action='append', help='Include one or more custom fields in the query by id.')
     
     args = parser.parse_args()
     
-    if args.verbose:
+    if not args.quiet:
         logging.basicConfig(level=logging.INFO)
+        
+    if not all((args.domain, args.email, args.apikey)):
+        parser.error("""The JIRA_DOMAIN, JIRA_EMAIL, and JIRA_APIKEY environment variables """
+                     """must be set or provided via the -d -e -k command line flags.""")
+        return
+    
+    logging.info('connecting to {} with {} email...'.format(args.domain, args.email))
     
     client = Client(args.domain, email=args.email, apikey=args.apikey)
     
     mode = 'a' if args.append else 'w' 
     
-    custom_fields = [k if k.startswith('customfield') else f'customfield_{k}' for k in args.field] if args.field else []
+    custom_fields = [k if k.startswith('customfield') else 'customfield_{}'.format(k) for k in args.field] if args.field else []
     
     with open(args.output, mode, newline='') as csv_file:
         logging.info('{} opened for writing (mode: {})...'.format(args.output, mode))
