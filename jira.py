@@ -248,7 +248,7 @@ def fetch(client, project_key, since='2020-01-01', custom_fields=None, updates_o
             yield row
 
 
-def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_fields=None, updates_only=False, write_header=False):
+def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_fields=None, updates_only=False, write_header=False, anonymize=False):
     fieldnames = [
         'project_id',
         'project_key',
@@ -289,6 +289,11 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_field
                 value = value.astimezone(pytz.UTC)
                 record[key] = value.isoformat()
 
+        if anonymize:
+            record['issue_key'] = record['issue_key'].replace(record['project_key'], 'PRJ') 
+            record['project_key'] = 'PRJ'
+            record['issue_title'] = None
+                
         writer.writerow(record)
         count += 1
     
@@ -310,6 +315,7 @@ def main():
         When passed, instead of extracting issues created since the since argument,
         only issues *updated* since the since argument will be extracted.''')
     parser.add_argument('--append', action='store_true', help='Append to the output file instead of overwriting it.')
+    parser.add_argument('--anonymize', action='store_true', help='Anonymize the data output (no issue titles, project keys, etc).')
     parser.add_argument('-d', '--domain', default=domain, help='Jira project domain url (i.e., https://company.atlassian.net). Can also be provided via JIRA_DOMAIN environment variable.')
     parser.add_argument('-e', '--email',  default=email,  help='Jira user email address for authentication. Can also be provided via JIRA_EMAIL environment variable.')
     parser.add_argument('-k', '--apikey', default=apikey, help='Jira user api key for authentication. Can also be provided via JIRA_APIKEY environment variable.')
@@ -335,7 +341,8 @@ def main():
                      since=args.since,
                      custom_fields=custom_fields,
                      updates_only=args.updates_only,
-                     write_header=not args.append)
+                     write_header=not args.append,
+                     anonymize=args.anonymize)
 
 
 if __name__ == '__main__':
