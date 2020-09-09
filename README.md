@@ -31,6 +31,18 @@ python jira.py [project_key] [since_date]
 jupyter lab
 ```
 
+## Converting the Jupyter Notebook to a Script to Run Directly
+
+```
+jupyter nbconvert --to script kanban.ipynb
+```
+
+Then:
+
+```
+python kanban.py
+```
+
 ## Examples:
 
 Generated from an example Jira project and data loaded from [example.csv](data/example.csv) on 2020-08-25 covering the previous 90 days:
