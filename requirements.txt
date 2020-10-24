@@ -2,6 +2,7 @@ matplotlib
 python-dateutil
 pytz
 pandas
+pingouin
 seaborn
 lifelines
 requests

@@ -16,6 +16,7 @@ import matplotlib
 import matplotlib.pyplot
 import numpy
 import pandas
+import pingouin
 import seaborn
 
 from pandas.plotting import register_matplotlib_converters
@@ -123,8 +124,10 @@ def read_data(path, omit=None, points_field=None, since='', until=''):
     
     min_date = data['issue_created_date'].min().strftime('%Y-%m-%d')
     max_date = data['issue_created_date'].max().strftime('%Y-%m-%d')
-
-    logger.info(f'-> {n3} changelog items remain created from {min_date} to {max_date}')
+    status_min_date = data['status_change_date'].min().strftime('%Y-%m-%d')
+    status_max_date = data['status_change_date'].max().strftime('%Y-%m-%d')
+    
+    logger.info(f'-> {n3} changelog items remain created from {min_date} to {max_date} with status changes from {status_min_date} to {status_max_date}')
     logger.info('---')
 
     return data, dupes, filtered
@@ -132,7 +135,6 @@ def read_data(path, omit=None, points_field=None, since='', until=''):
 
 def process_flow_data(data, since='', until=''):
     """ process cumulative flow statuses from changelog data """
-    STATUS_ORDER = ['Prioritized', 'In Preparation', 'In Progress', 'Review', 'Accepted', 'Deployed']
 
     if data.empty:
         logger.warning('Warning: Data for flow analysis is empty')
@@ -182,16 +184,72 @@ def process_flow_data(data, since='', until=''):
     
     f['date'] = f['date'].dt.normalize()
     f['date'] = f['date'].dt.date
-    ending_status = STATUS_ORDER[-1]
-    status_columns = list(reversed(STATUS_ORDER))
-    flow_columns = ['date'] + [status for status in status_columns if status in f]
-    flow = f[flow_columns]
 
-    return flow
+    return f
 
 
-def process_issue_data(data):
-    """ process aggregate issue data from changelog data, calculating cycle and lead times """
+def process_flow_category_data(data, since='', until=''):
+    """ process cumulative flow status categories from changelog data """
+ 
+    if data.empty:
+        logger.warning('Warning: Data for flow analysis is empty')
+        return
+    
+    if not since or not until:
+        raise AnalysisException('Flow analysis requires both `since` and `until` dates for processing')
+    
+    dates = pandas.date_range(start=since, end=until, closed='left', freq='D')
+    
+    flow_data = data.copy().reset_index()
+    flow_data = flow_data.sort_values(['status_change_date'])
+
+    statuses = set(flow_data['status_from_category_name']) | set(flow_data['status_to_category_name'])
+    if numpy.nan in statuses:
+        statuses.remove(numpy.nan)
+        
+    f = pandas.DataFrame(columns=['date'] + list(statuses))
+
+    last_counter = None
+
+    for date in dates:
+        tomorrow = date + pandas.Timedelta(days=1)
+        date_changes = flow_data
+        date_changes = date_changes[date_changes['status_change_date'] >= date]
+        date_changes = date_changes[date_changes['status_change_date'] < tomorrow]
+
+        if last_counter:
+            counter = last_counter
+        else:
+            counter = collections.Counter()
+        for item in date_changes['status_from_category_name']:
+            if counter[item] > 0:
+                counter[item] -= 1
+        for item in date_changes['status_to_category_name']:
+            counter[item] += 1
+        
+        row = dict(counter)
+        row['date'] = date
+        f = f.append(row, ignore_index=True)
+        
+        last_counter = counter
+
+    f = f.fillna(0)
+    if f.empty:
+        return f
+    
+    f['date'] = f['date'].dt.normalize()
+    f['date'] = f['date'].dt.date
+
+    return f
+
+
+def process_issue_data(data, omit_weekends=True):
+    """
+    process aggregate issue data from changelog data, calculating cycle and lead times
+    
+    optionally, include weekends in the cycle time and lead time calculations
+    
+    """
     if data.empty:
         logger.warning('Warning: Data for issue analysis is empty')
         return
@@ -207,7 +265,6 @@ def process_issue_data(data):
         issue_ids[item.issue_key] = item.issue_id
         issue_keys[item.issue_id] = item.issue_key
         issue_points[item.issue_id] = item.issue_points
-
 
     # What we want to be able to do at this point is to know the total time an issue spends in the "In Progress" state. We could take a look at all of the state changes and compute the sum of the time residing in the "In Progess" state. An alternative that is easier to compute (with less accuracy) is to track when the issue was first created, when it first moved into work in progress, and when it finally completed, ignoring other state transitions in between.
     # 
@@ -263,37 +320,34 @@ def process_issue_data(data):
         in_progress = issue_statuses[issue_id].get('first_in_progress')
         complete = issue_statuses[issue_id].get('last_complete')
 
-        # since numpy uses naive datetimes, let's make these dates naive
-        if new:
-            new = new.replace(tzinfo=None)
-        if in_progress:
-            in_progress = in_progress.replace(tzinfo=None)
-        if complete:
-            complete = complete.replace(tzinfo=None)
-
+        # compute cycle time
+        lead_time = pandas.Timedelta(days=0)
+        cycle_time = pandas.Timedelta(days=0)
+            
         if complete:
             lead_time = complete - new
+            cycle_time = lead_time
 
             if in_progress:
                 cycle_time = complete - in_progress
-
-                # adjust for weekends in the cycle_time
-                weekend_days = numpy.busday_count(in_progress.date(), complete.date(), weekmask='Sat Sun')
-                cycle_time -= pandas.Timedelta(days=weekend_days)
-
             else:
                 cycle_time = pandas.Timedelta(days=0)
-        else:
-            lead_time = pandas.Timedelta(days=0)
-            cycle_time = pandas.Timedelta(days=0)
 
-        # restore UTC dates
-        # if new:
-        #     new = pandas.to_datetime(new, utc=True)
-        # if in_progress:
-        #     in_progress = pandas.to_datetime(in_progress, utc=True)
-        # if complete:
-        #     complete = pandas.to_datetime(complete, utc=True)
+        # adjust lead time and cycle time for weekend (non-working) days
+        if complete and omit_weekends:
+            weekend_days = numpy.busday_count(new.date(), complete.date(), weekmask='Sat Sun')
+            lead_time -= pandas.Timedelta(days=weekend_days)
+            
+            if in_progress:
+                weekend_days = numpy.busday_count(in_progress.date(), complete.date(), weekmask='Sat Sun')
+                cycle_time -= pandas.Timedelta(days=weekend_days)
+        
+        # ensure we don't have negative lead times / cycle times
+        if lead_time/pandas.to_timedelta(1, unit='D') < 0:
+            lead_time = pandas.Timedelta(days=0)
+            
+        if cycle_time/pandas.to_timedelta(1, unit='D') < 0:
+            cycle_time = pandas.Timedelta(days=0)
             
         issue_data = issue_data.append({
             'issue_key': issue_keys.get(issue_id),
@@ -313,21 +367,20 @@ def process_issue_data(data):
 
     # truncate days to omit time
     issue_data['new_day'] = issue_data['new'].values.astype('<M8[D]')
-    #issue_data['new_day'] = issue_data['new_day'].apply(pandas.to_datetime, utc=True)
     
     issue_data['in_progress_day'] = issue_data['in_progress'].values.astype('<M8[D]')
-    #issue_data['in_progress_day'] = issue_data['in_progress_day'].apply(pandas.to_datetime, utc=True)
     
     issue_data['complete_day'] = issue_data['complete'].values.astype('<M8[D]')
-    #issue_data['complete_day'] = issue_data['complete_day'].apply(pandas.to_datetime, utc=True)
 
     # add column for lead time represented as days
     issue_data['lead_time_days'] = issue_data['lead_time'] / pandas.to_timedelta(1, unit='D')
+    
     # round lead time less than 1 hour to zero
     issue_data.loc[issue_data['lead_time_days'] < 1/24.0, 'lead_time_days'] = 0
 
     # add column for cycle time represented as days
     issue_data['cycle_time_days'] = issue_data['cycle_time'] / pandas.to_timedelta(1, unit='D')
+    
     # round cycle time less than 1 hour to zero
     issue_data.loc[issue_data['cycle_time_days'] < 1/24.0, 'cycle_time_days'] = 0
 
@@ -348,7 +401,10 @@ def process_issue_data(data):
 
 
 def process_cycle_data(issue_data, since='', until=''):
-    """ process cycle time data from issue data """
+    """
+    process cycle time data from issue data
+    
+    """
     if issue_data.empty:
         logger.warning('Warning: Data for cycle analysis is empty')
         return
@@ -374,7 +430,10 @@ def process_cycle_data(issue_data, since='', until=''):
 
 
 def process_throughput_data(issue_data, since='', until=''):
-    """ process throughput data from issue data """
+    """
+    process throughput data from issue data
+    
+    """
     if issue_data.empty:
         logger.warning('Warning: Data for throughput analysis is empty')
         return
@@ -428,7 +487,10 @@ def process_throughput_data(issue_data, since='', until=''):
 
 
 def process_wip_data(issue_data, since='', until=''):
-    """ process wip average data from issue data """
+    """
+    process wip average data from issue data
+    
+    """
     if issue_data.empty:
         logger.warning('Warning: Data for wip analysis is empty')
         return
@@ -476,7 +538,10 @@ def process_wip_data(issue_data, since='', until=''):
 
 
 def process_wip_age_data(issue_data, since='', until=''):
-    """ process wip age data from issue data """
+    """
+    process wip age data from issue data
+    
+    """
     if issue_data.empty:
         logger.warning('Warning: Data for wip age analysis is empty')
         return
@@ -506,8 +571,19 @@ def process_wip_age_data(issue_data, since='', until=''):
     return age_data
 
 
+def process_correlation(x, y):
+    """
+    run a pearson correlation analysis between two sets (usually issue_points and cycle_time_days)
+    
+    """
+    return pingouin.corr(x, y, method='pearson')
+
+
 def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10000, window=90):
-    """ forecast number of days it will take to complete n number of items """
+    """
+    forecast number of days it will take to complete n number of items
+    
+    """
     if throughput_data.empty:
         logger.warning('Warning: Data for Montecarlo analysis is empty')
         return
@@ -540,7 +616,10 @@ def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10
 
 
 def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=10000, window=90):
-    """ forecast number of items completed in n days """
+    """
+    forecast number of items to be completed in n days
+    
+    """
     if throughput_data.empty:
         logger.warning('Warning: Data for Montecarlo analysis is empty')
         return
@@ -564,7 +643,10 @@ def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=100
 
 
 def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=10000, window=90):
-    """ forecast number of days it will take to complete n number of points """
+    """
+    forecast number of days it will take to complete n number of points
+    
+    """
     if throughput_data.empty:
         logger.warning('Warning: Data for Montecarlo analysis is empty')
         return
@@ -601,7 +683,10 @@ def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=
 
 
 def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10000, window=90):
-    """ forecast number of points completed in n days """
+    """
+    forecast number of points to be completed in n days
+    
+    """
     if throughput_data.empty:
         logger.warning('Warning: Data for Montecarlo analysis is empty')
         return
@@ -627,7 +712,7 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
     return distribution_how, samples
 
 def run(args):    
-    data, dupes, filtered = read_data(args.file, omit=args.omit, since=args.since, until=args.until)
+    data, dupes, filtered = read_data(args.file, omit=args.omit, points_field=args.points_field, since=args.since, until=args.until)
     if data.empty:
         logger.warning('Warning: Data for analysis is empty')
         return
@@ -682,11 +767,49 @@ def run(args):
             '-> 75th Percentile: %.2f' % a['P75'].iat[-1], 
             '-> 85th Percentile: %.2f' % a['P85'].iat[-1], 
             '-> 95th Percentile: %.2f' % a['P95'].iat[-1],
+            '',
+        ])
+        
+        
+    if args.command == 'correlation':
+        i, _ = process_issue_data(data)
+        
+        points = i['issue_points'].values.astype(float)
+        lead_time = i['lead_time_days'].values.astype(float)
+        cycle_time = i['cycle_time_days'].values.astype(float)
+        
+        cycle_result = process_correlation(points, cycle_time)
+        lead_result = process_correlation(points, lead_time)
+        
+        args.output.writelines('%s\n' % line for line in [
+            'Point Correlation to Cycle Time:',
+            '-> Observations (n): %s' % cycle_result['n'].iat[0],
+            '-> Correlation Coefficient (r): %.2f' % cycle_result['r'].iat[0],
+            '-> Determination Coefficient (r^2): %.2f' % cycle_result['r2'].iat[0],
+            '-> P-Value (p): %.2f' % cycle_result['p-val'].iat[0],
+            '-> Likelihood of detecting effect (power): %.2f' % cycle_result['power'].iat[0],
+            '-> Correlation %s significant' % ('is' if cycle_result['p-val'].iat[0] <= 0.05 else 'is not'),
+            '',
+            'Point Correlation to Lead Time:',
+            '-> Observations (n): %s' % lead_result['n'].iat[0],
+            '-> Correlation Coefficient (r): %.2f' % lead_result['r'].iat[0],
+            '-> Determination Coefficient (r^2): %.2f' % lead_result['r2'].iat[0],
+            '-> P-Value (p): %.2f' % lead_result['p-val'].iat[0],
+            '-> Likelihood of detecting effect (power): %.2f' % lead_result['power'].iat[0],
+            '-> Correlation %s significant' % ('is' if lead_result['p-val'].iat[0] <= 0.05 else 'is not'),
         ])
     
     if args.command == 'flow':
         f = process_flow_data(data, since=args.since, until=args.until)
+        
+        #ending_status = STATUS_ORDER[-1]
+        #status_columns = list(reversed(STATUS_ORDER))
+        #flow_columns = ['date'] + [status for status in status_columns if status in f]
+        #flow = f[flow_columns]
+        
         print(f)
+        print(f.diff())
+        
     
     if args.command == 'forecast-items': 
         # pre-req
@@ -731,22 +854,25 @@ def main():
     parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only output warnings to console.')
     
     parser.add_argument('--omit', action='append', help='Omit specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
+    parser.add_argument('--points-field', help='Load issue points data from this field')
     parser.add_argument('--since', help='Only process issues created since date (format: YYYY-MM-DD)')
     parser.add_argument('--until', help='Only process issues created up until date (format: YYYY-MM-DD)')
 
     subparsers = parser.add_subparsers(dest='command')
     
-    subparser_summary = subparsers.add_parser('summary')
+    subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')
 
-    subparser_flow = subparsers.add_parser('flow')
+    subparser_flow = subparsers.add_parser('flow', help='Analyze flow and cumulative flow metrics')
     
-    subparser_forecast_items = subparsers.add_parser('forecast-items')
+    subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')
+    
+    subparser_forecast_items = subparsers.add_parser('forecast-items', help='Forecast future work items')
     subparser_forecast_items.add_argument('--items', type=int, help='Number of items to predict answering the question "how many days to complete N items?"')
     subparser_forecast_items.add_argument('--days', type=int, help='Number of days to predict answering the question "how many items can be completed in N days?"')
     subparser_forecast_items.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_items.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
     
-    subparser_forecast_points = subparsers.add_parser('forecast-points')
+    subparser_forecast_points = subparsers.add_parser('forecast-points', help='Forecast points')
     subparser_forecast_points.add_argument('--points', type=int, help='Number of points to predict answering the question "how many days to complete N points?"')
     subparser_forecast_points.add_argument('--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"')    
     subparser_forecast_points.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
