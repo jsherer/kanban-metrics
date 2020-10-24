@@ -1,8 +1,8 @@
 """
 
 This utility will use the Jira REST API to download a project's
-statuses, issues, and historical changelog data to be used in the
-Kanban metrics analysis instead of relying on a Looker query.
+statuses, issues, and historical changelog data to be used in a
+Kanban metrics analysis (see analysis.py)
 
 """
 import argparse
