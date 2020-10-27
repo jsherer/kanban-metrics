@@ -47,6 +47,7 @@ class Client:
         }
 
 def fetch_status_categories_all(client):
+    """ get all status categories """
     response = requests.get(client.url('/rest/api/3/statuscategory'),
                             auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
@@ -55,6 +56,7 @@ def fetch_status_categories_all(client):
     return json.loads(response.text)
 
 def fetch_statuses_all(client):
+    """ get all statuses """
     response = requests.get(client.url('/rest/api/3/status'),
                             auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
@@ -63,6 +65,7 @@ def fetch_statuses_all(client):
     return json.loads(response.text)
 
 def fetch_statuses_by_project(client, project_key):
+    """ get all statuses in a project """
     response = requests.get(client.url('/rest/api/3/project/{}/statuses'.format(project_key)), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
         logging.warning('could not fetch project {} statuses'.format(project_key))
@@ -70,6 +73,7 @@ def fetch_statuses_by_project(client, project_key):
     return json.loads(response.text)
 
 def fetch_project(client, project_key):
+    """ get a project """
     response = requests.get(client.url('/rest/api/3/project/{}'.format(project_key)), auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
         logging.warning('could not fetch project {}'.format(project_key))
@@ -77,6 +81,7 @@ def fetch_project(client, project_key):
     return json.loads(response.text)
 
 def fetch_changelog(client, issue_id, start=0, limit=10):
+    """ get an issue changelog """
     params={'startAt': start, 'maxResults': limit}
     response = requests.request('GET', client.url('/rest/api/3/issue/{}/changelog'.format(issue_id)), params=params, auth=client.auth(), headers=client.headers())
     if response.status_code != 200:
@@ -85,6 +90,7 @@ def fetch_changelog(client, issue_id, start=0, limit=10):
     return json.loads(response.text)
 
 def yield_changelog_all(client, issue_id, batch=100):
+    """ iterate through all changelog items in an issue """
     starting_limit = 10
     changelog_count = fetch_changelog(client, issue_id, start=0, limit=starting_limit)
     total = changelog_count.get('total', 0)
@@ -105,6 +111,7 @@ def yield_changelog_all(client, issue_id, batch=100):
                 fetched += 1
 
 def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, custom_fields=None, updates_only=False, use_get=False):
+    """ get all issues matching the filters in a project """
     jql = 'project = {} AND created >= "{}" ORDER BY created ASC'.format(project_key, since)
     
     if updates_only:
@@ -155,6 +162,7 @@ def fetch_issues(client, project_key, since='2020-01-01', start=0, limit=1000, c
     return json.loads(response.text)
 
 def yield_issues_all(client, project_key, since='2020-01-01', batch=100, custom_fields=None, updates_only=False, use_get=False):
+    """ iterate through all issues in a project matching the filter """
     issues_count = fetch_issues(client, project_key, since=since, start=0, limit=0, custom_fields=custom_fields, updates_only=updates_only, use_get=use_get)
     total = issues_count.get('total', 0)
     fetched = 0
@@ -170,6 +178,7 @@ def yield_issues_all(client, project_key, since='2020-01-01', batch=100, custom_
             fetched += 1
 
 def fetch(client, project_key, since='2020-01-01', custom_fields=None, updates_only=False):
+    """ get all issue and changelog information for a project """
     logging.info('fetching project {} since {}...'.format(project_key, since))
     
     # get high level information fresh every time
@@ -255,7 +264,17 @@ def fetch(client, project_key, since='2020-01-01', custom_fields=None, updates_o
             yield row
 
 
-def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_fields=None, updates_only=False, write_header=False, anonymize=False):
+def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_fields=None, custom_field_names=None, updates_only=False, write_header=False, anonymize=False):
+    """
+    iterate through all issues in a project matching the filter criteria and write it to csv 
+    
+    optionally, fetch custom fields and map them to custom column names in the csv
+    
+    """
+    import datetime
+    import dateutil.parser
+    import pytz
+    
     fieldnames = [
         'project_id',
         'project_key',
@@ -275,13 +294,14 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_field
         'status_change_date',
     ]
     
+    custom_field_map = {}
     if custom_fields:
-        fieldnames.extend(custom_fields)
-
-    import datetime
-    import dateutil.parser
-    import pytz
-
+        if custom_field_names:
+            custom_field_map = dict(zip(custom_fields, custom_field_names))
+            fieldnames.extend(custom_field_names)
+        else:
+            fieldnames.extend(custom_fields)    
+        
     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
     
     if write_header:
@@ -300,6 +320,13 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_field
             record['issue_key'] = record['issue_key'].replace(record['project_key'], 'PRJ') 
             record['project_key'] = 'PRJ'
             record['issue_title'] = None
+            
+        if custom_field_map:
+            for key, value in custom_field_map.items():
+                if key not in record:
+                    continue
+                record[value] = record[key]
+                del record[key]
                 
         writer.writerow(record)
         count += 1
@@ -308,6 +335,7 @@ def generate_csv(client, csv_file, project_key, since='2020-01-01', custom_field
         
         
 def main():
+    """ parse the command line arguments """
     domain = os.getenv('JIRA_DOMAIN', '')
     email  = os.getenv('JIRA_EMAIL', '')
     apikey = os.getenv('JIRA_APIKEY', '')
@@ -327,6 +355,7 @@ def main():
     parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only output warnings to console.')
     
     parser.add_argument('-f', '--field', metavar='FIELD_ID', action='append', help='Include one or more custom fields in the query by id.')
+    parser.add_argument('-n', '--name', metavar='FIELD_NAME', action='append', help='Corresponding output column names for each custom field.')
     
     args = parser.parse_args()
     
@@ -345,12 +374,14 @@ def main():
     mode = 'a' if args.append else 'w' 
     
     custom_fields = [k if k.startswith('customfield') else 'customfield_{}'.format(k) for k in args.field] if args.field else []
+    custom_field_names = list(args.name) + custom_fields[len(args.name):]
     
     with open(args.output, mode, newline='') as csv_file:
         logging.info('{} opened for writing (mode: {})...'.format(args.output, mode))
         generate_csv(client, csv_file, args.project,
                      since=args.since,
                      custom_fields=custom_fields,
+                     custom_field_names=custom_field_names,
                      updates_only=args.updates_only,
                      write_header=not args.append,
                      anonymize=args.anonymize)

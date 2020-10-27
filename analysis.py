@@ -37,7 +37,7 @@ def init():
     matplotlib.pyplot.rcParams['lines.linewidth'] = 1.5
 
 
-def read_data(path, omit=None, points_field=None, since='', until=''):
+def read_data(path, omit=None, since='', until=''):
     """
     read csv changelog data with necessary fields:
     
@@ -45,6 +45,7 @@ def read_data(path, omit=None, points_field=None, since='', until=''):
     * issue_key - unique textual key for this issue
     * issue_type_name - category of issue type
     * issue_created_date - when the issue was created
+    * issue_points - how many points were assigned to this issue (optional)
     * changelog_id - unique id for this particular change for this issue
     * status_change_date - when the change was made
     * status_from_name - from which status the issue was changed (optional)
@@ -54,7 +55,6 @@ def read_data(path, omit=None, points_field=None, since='', until=''):
     
     """
     OMIT_ISSUE_TYPES = set(omit) if omit else None
-    STORY_POINT_FIELD = points_field
     
     logger.info(f'Opening input file for reading...')
 
@@ -116,9 +116,7 @@ def read_data(path, omit=None, points_field=None, since='', until=''):
     filtered = n2-n3
     logger.info(f'-> {filtered} changelog items filtered')
     
-    # rename the story point field name to "issue_points"
-    if STORY_POINT_FIELD:
-        data = data.rename(columns={STORY_POINT_FIELD:'issue_points'})
+    # if issue_points does not exist, set them all to 1
     if 'issue_points' not in data:
         data['issue_points'] = 1
     
@@ -735,7 +733,7 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
     return distribution_how, samples
 
 def run(args):    
-    data, dupes, filtered = read_data(args.file, omit=args.omit, points_field=args.points_field, since=args.since, until=args.until)
+    data, dupes, filtered = read_data(args.file, omit=args.omit, since=args.since, until=args.until)
     if data.empty:
         logger.warning('Warning: Data for analysis is empty')
         return
@@ -913,10 +911,10 @@ def run(args):
         t, tw = process_throughput_data(i, since=since, until=until)
         
         # analysis
-        if args.items:
-            args.output.write(f'Montecarlo Forecast: How long to complete {args.items} items?:\n')
+        if args.n:
+            args.output.write(f'Montecarlo Forecast: How long to complete {args.n} items?:\n')
             args.output.write(f'--------------------------------------------------------------\n')
-            ml, s = forecast_montecarlo_how_long_items(t, items=args.items, simulations=args.simulations, window=args.window)
+            ml, s = forecast_montecarlo_how_long_items(t, items=args.n, simulations=args.simulations, window=args.window)
             for q in (0.25, 0.5, 0.75, 0.85, 0.95):
                 args.output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
             
@@ -932,10 +930,10 @@ def run(args):
         # pre-req
         t, tw = process_throughput_data(i, since=since, until=until)
         
-        if args.points:
-            args.output.write(f'Montecarlo Forecast: How long to complete {args.points} points?\n')
+        if args.n:
+            args.output.write(f'Montecarlo Forecast: How long to complete {args.n} points?\n')
             args.output.write(f'---------------------------------------------------------------\n')
-            mlp, s = forecast_montecarlo_how_long_points(t, items=args.points, simulations=args.simulations, window=args.window)
+            mlp, s = forecast_montecarlo_how_long_points(t, items=args.n, simulations=args.simulations, window=args.window)
             for q in (0.25, 0.5, 0.75, 0.85, 0.95):
                 args.output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
         
@@ -948,6 +946,7 @@ def run(args):
 
 
 def main():
+    """ parse the command line arguments """
     parser = argparse.ArgumentParser(description='Analyze issue changelog data')
     parser.add_argument('-f', '--file', type=argparse.FileType('r'), default='-', help='Data file to analyze (default: stdin)')
     parser.add_argument('-o', '--output', type=argparse.FileType('w'), default='-', help='File to output results (default: stdout)')
@@ -955,7 +954,6 @@ def main():
     
     parser.add_argument('--exclude-weekends', action='store_true', help='Exclude weekends from cycle and lead time calculations')
     parser.add_argument('--omit', action='append', help='Omit specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
-    parser.add_argument('--points-field', help='Load issue points data from this field')
     parser.add_argument('--since', help='Only process issues created since date (format: YYYY-MM-DD)')
     parser.add_argument('--until', help='Only process issues created up until date (format: YYYY-MM-DD)')
 
@@ -976,18 +974,20 @@ def main():
     
     subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')
     
-    subparser_forecast = subparsers.add_parser('forecast', help='Forecast future work items')
+    subparser_forecast = subparsers.add_parser('forecast', help='Forecast the future using Montecarlo simulation')
     subparser_forecast_subparsers = subparser_forecast.add_subparsers(dest='forecast_type')
     
     subparser_forecast_items = subparser_forecast_subparsers.add_parser('items', help='Forecast future work items')
-    subparser_forecast_items.add_argument('--items', type=int, help='Number of items to predict answering the question "how many days to complete N items?"')
-    subparser_forecast_items.add_argument('--days', type=int, help='Number of days to predict answering the question "how many items can be completed in N days?"')
+    subparser_forecast_items_group = subparser_forecast_items.add_mutually_exclusive_group(required=True)
+    subparser_forecast_items_group.add_argument('-n', '--items',  dest='n', type=int, help='Number of items to predict answering the question "how many days to complete N items?"')
+    subparser_forecast_items_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many items can be completed in N days?"')
     subparser_forecast_items.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_items.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
     
     subparser_forecast_points = subparser_forecast_subparsers.add_parser('points', help='Forecast future points')
-    subparser_forecast_points.add_argument('--points', type=int, help='Number of points to predict answering the question "how many days to complete N points?"')
-    subparser_forecast_points.add_argument('--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"')    
+    subparser_forecast_points_group = subparser_forecast_points.add_mutually_exclusive_group(required=True)
+    subparser_forecast_points_group.add_argument('-n', '--points', dest='n', type=int, help='Number of points to predict answering the question "how many days to complete N points?"')
+    subparser_forecast_points_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"') 
     subparser_forecast_points.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_points.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
 
