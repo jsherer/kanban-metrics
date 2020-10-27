@@ -966,7 +966,7 @@ def main():
 
     subparsers = parser.add_subparsers(dest='command')
 
-    subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')
+    subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')  # NOQA
 
     subparser_flow = subparsers.add_parser('flow', help='Analyze flow and cumulative flow and output detail')
     subparser_flow.add_argument('-s', '--status', action='append', help='Filter output to include this status (can accept more than one for ordering')
@@ -977,9 +977,9 @@ def main():
     subparser_throughput = subparsers.add_parser('throughput', help='Analyze throughput and output detail')
     subparser_throughput.add_argument('type', choices=('daily', 'weekly'), help='Type of throughput data to output (daily, weekly)')
 
-    subparser_cycletime = subparsers.add_parser('cycletime', help='Analyze cycletime and output detail')
+    subparser_cycletime = subparsers.add_parser('cycletime', help='Analyze cycletime and output detail')  # NOQA
 
-    subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')
+    subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')  # NOQA
 
     subparser_forecast = subparsers.add_parser('forecast', help='Forecast the future using Montecarlo simulation')
     subparser_forecast_subparsers = subparser_forecast.add_subparsers(dest='forecast_type')
