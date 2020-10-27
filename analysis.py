@@ -907,7 +907,8 @@ def run(args):
             c.to_string(),
         ])
         
-    if args.command == 'forecast-items': 
+        
+    if args.command == 'forecast' and args.forecast_type == 'items': 
         # pre-req
         t, tw = process_throughput_data(i, since=since, until=until)
         
@@ -927,7 +928,7 @@ def run(args):
                 args.output.write(f'-> {int(q*100)}%% Probability: %s Items\n' % s.Items.quantile(1-q))
 
         
-    if args.command == 'forecast-points':
+    if args.command == 'forecast' and args.forecast_type == 'points': 
         # pre-req
         t, tw = process_throughput_data(i, since=since, until=until)
         
@@ -975,13 +976,16 @@ def main():
     
     subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')
     
-    subparser_forecast_items = subparsers.add_parser('forecast-items', help='Forecast future work items')
+    subparser_forecast = subparsers.add_parser('forecast', help='Forecast future work items')
+    subparser_forecast_subparsers = subparser_forecast.add_subparsers(dest='forecast_type')
+    
+    subparser_forecast_items = subparser_forecast_subparsers.add_parser('items', help='Forecast future work items')
     subparser_forecast_items.add_argument('--items', type=int, help='Number of items to predict answering the question "how many days to complete N items?"')
     subparser_forecast_items.add_argument('--days', type=int, help='Number of days to predict answering the question "how many items can be completed in N days?"')
     subparser_forecast_items.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_items.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
     
-    subparser_forecast_points = subparsers.add_parser('forecast-points', help='Forecast points')
+    subparser_forecast_points = subparser_forecast_subparsers.add_parser('points', help='Forecast future points')
     subparser_forecast_points.add_argument('--points', type=int, help='Number of points to predict answering the question "how many days to complete N points?"')
     subparser_forecast_points.add_argument('--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"')    
     subparser_forecast_points.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
@@ -996,6 +1000,10 @@ def main():
     
     if args.command is None:
         parser.print_help()
+        return
+    
+    if args.command == 'forecast' and args.forecast_type is None:
+        subparser_forecast.print_help()
         return
     
     if args.output:
