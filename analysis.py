@@ -37,7 +37,7 @@ def init():
     matplotlib.pyplot.rcParams['lines.linewidth'] = 1.5
 
 
-def read_data(path, omit=None, since='', until=''):
+def read_data(path, exclude_types=None, since='', until=''):
     """
     read csv changelog data with necessary fields:
     
@@ -54,7 +54,7 @@ def read_data(path, omit=None, since='', until=''):
     * status_to_category_name - to which status category the issue was changed
     
     """
-    OMIT_ISSUE_TYPES = set(omit) if omit else None
+    OMIT_ISSUE_TYPES = set(exclude_types) if exclude_types else None
     
     logger.info(f'Opening input file for reading...')
 
@@ -103,7 +103,7 @@ def read_data(path, omit=None, since='', until=''):
         data = data[~data['issue_type_name'].isin(OMIT_ISSUE_TYPES)]
         n3 = len(data)
         omitted = n2-n3
-        logger.info(f'-> {omitted} changelog items omitted')
+        logger.info(f'-> {omitted} changelog items excluded by type')
 
     # filter out issues before since date and after until
     if since:
@@ -383,7 +383,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
             'cycle_time_days': None,
         }, ignore_index=True)
 
-    # truncate days to omit time
+    # truncate days
     issue_data['new_day'] = issue_data['new'].values.astype('<M8[D]')
     
     issue_data['in_progress_day'] = issue_data['in_progress'].values.astype('<M8[D]')
@@ -733,7 +733,7 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
     return distribution_how, samples
 
 def run(args):    
-    data, dupes, filtered = read_data(args.file, omit=args.omit, since=args.since, until=args.until)
+    data, dupes, filtered = read_data(args.file, exclude_types=args.exclude_type, since=args.since, until=args.until)
     if data.empty:
         logger.warning('Warning: Data for analysis is empty')
         return
@@ -953,7 +953,7 @@ def main():
     parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only output warnings to console.')
     
     parser.add_argument('--exclude-weekends', action='store_true', help='Exclude weekends from cycle and lead time calculations')
-    parser.add_argument('--omit', action='append', help='Omit specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
+    parser.add_argument('--exclude-type', action='append', help='Exclude one or more specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
     parser.add_argument('--since', help='Only process issues created since date (format: YYYY-MM-DD)')
     parser.add_argument('--until', help='Only process issues created up until date (format: YYYY-MM-DD)')
 

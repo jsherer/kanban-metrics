@@ -1,10 +1,11 @@
 # Kanban Metrics
 
-This is an experimental [Jupyter notebook](kanban.ipynb) using Jira issue changelogs to:
+This is an experimental [Jupyter notebook](kanban.ipynb) and [command line](jira.py) [tools](analysis.py) using Jira issue changelogs to:
 
 1. load a historical record of a Kanban
-2. create graphs for key Kanban metrics (cycletime, throughput, flow, etc)
-3. use these metrics to run a Kaplan-Meier survivability model and a Monte Carlo simulation
+2. summarize key Kanban metrics
+2. graph those key Kanban metrics (cycletime, throughput, flow, etc)
+3. use these metrics to run a Kaplan-Meier survivability model and a Monte Carlo simulations
 
 This allows us to use data forecasting (instead of gut estimation) to gauge:
 
@@ -25,22 +26,16 @@ pip install -r requirements.txt
 python jira.py [project_key] [since_date]
 ```
 
-## Analyzing Data in Jupyter
+## Analyzing Data from the Command Line
+
+```
+python analysis.py -f data.csv summary
+```
+
+## Analyzing Data from Jupyter
 
 ```
 jupyter lab
-```
-
-## Converting the Jupyter Notebook to a Script to Run Directly
-
-```
-jupyter nbconvert --to script kanban.ipynb
-```
-
-Then:
-
-```
-python kanban.py
 ```
 
 ## Examples:
@@ -51,7 +46,6 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/cycletime-histogram.png)
 ![](images/throughput-timeline.png)
 ![](images/throughput-histogram.png)
-![](images/velocity-timeline.png)
 ![](images/burndown-timeline.png)
 ![](images/flow-timeline.png)
 ![](images/flow-normalized-timeline.png)
@@ -59,9 +53,5 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/wip-aging.png)
 ![](images/forecast-kaplan-meier.png)
 ![](images/forecast-weibull-survival.png)
-![](images/distribution-montecarlo-when.png)
 ![](images/forecast-montecarlo-when.png)
-![](images/distribution-montecarlo-how.png)
 ![](images/forecast-montecarlo-how.png)
-![](images/distribution-montecarlo-how-velocity.png)
-![](images/forecast-montecarlo-how-velocity.png)
