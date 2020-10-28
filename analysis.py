@@ -10,6 +10,7 @@ import argparse
 import collections
 import logging
 
+import lifelines
 import matplotlib
 import matplotlib.pyplot
 import numpy
@@ -135,7 +136,7 @@ def read_data(path, exclude_types=None, since='', until=''):
         status_max_date = data['status_change_date'].max().strftime('%Y-%m-%d')
         num_issues = data['issue_key'].nunique()
         logger.info(f'-> {n3} changelog items remain created from {min_date} to {max_date} with status changes from {status_min_date} to {status_max_date}')
-        logger.info(f'-> {num_issues} unique issues loaded since {since}, ready for analysis')
+        logger.info(f'-> {num_issues} unique work items loaded since {since}, ready for analysis')
 
     logger.info('---')
 
@@ -606,6 +607,7 @@ def process_wip_age_data(issue_data, since='', until=''):
     age_data['P75'] = age_data['Age'].quantile(0.75)
     age_data['P85'] = age_data['Age'].quantile(0.85)
     age_data['P95'] = age_data['Age'].quantile(0.95)
+    age_data['P99'] = age_data['Age'].quantile(0.999)
 
     return age_data
 
@@ -616,6 +618,42 @@ def process_correlation(x, y):
 
     """
     return pingouin.corr(x, y, method='pearson')
+
+
+def analyze_survival_km(issue_data, since='', until=''):
+    """
+    run a kaplan-meier survivability analysis on the issue data
+
+    """
+    survivability_data = issue_data.copy()
+    survivability_data = survivability_data[survivability_data['complete_day'] >= pandas.to_datetime(since)]
+    survivability_data = survivability_data[survivability_data['complete_day'] < pandas.to_datetime(until)]
+    survivability_data = survivability_data.sort_values(['complete_day'])
+
+    durations = survivability_data['cycle_time_days']
+    event_observed = [1 if c else 0 for c in survivability_data['cycle_time_days']]
+
+    km = lifelines.KaplanMeierFitter()
+
+    return km.fit(durations, event_observed, label='Kaplan Meier Estimate'), km
+
+
+def analyze_survival_wb(issue_data, since='', until=''):
+    """
+    run a weibull survivability analysis on the issue data
+
+    """
+    survivability_data = issue_data.copy()
+    survivability_data = survivability_data[survivability_data['complete_day'] >= pandas.to_datetime(since)]
+    survivability_data = survivability_data[survivability_data['complete_day'] < pandas.to_datetime(until)]
+    survivability_data = survivability_data.sort_values(['complete_day'])
+
+    durations = [c if c else 0.00001 for c in survivability_data['cycle_time_days']]
+    event_observed = [1 if c else 0 for c in survivability_data['cycle_time_days']]
+
+    wb = lifelines.WeibullFitter()
+
+    return wb.fit(durations, event_observed, label='Weibull Estimate'), wb
 
 
 def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10000, window=90):
@@ -963,6 +1001,32 @@ def cmd_cycletime(output, issue_data, since='', until=''):
     ])
 
 
+def cmd_survival_km(output, issue_data, since='', until=''):
+    """ process survival analysis using Kaplan-Meier """
+    m, _ = analyze_survival_km(issue_data, since=since, until=until)
+
+    km_summary = pandas.DataFrame.from_records([
+        (f'{int((q)*100)}%', m.percentile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
+    ], columns=('Probability', 'Days'), index='Probability')
+
+    output.write('# Kaplan-Meier Estimation: How likely will a single work item be closed within n days?:\n')
+    output.write(km_summary.to_string())
+    output.write('\n---\n')
+
+
+def cmd_survival_wb(output, issue_data, since='', until=''):
+    """ process survival analysis using Weibull """
+    m, _ = analyze_survival_wb(issue_data, since=since, until=until)
+
+    wb_summary = pandas.DataFrame.from_records([
+        (f'{int((q)*100)}%', m.percentile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
+    ], columns=('Probability', 'Days'), index='Probability')
+
+    output.write('# Weibull Estimation: How likely will a single work item be closed within n days?:\n')
+    output.write(wb_summary.to_string())
+    output.write('\n---\n')
+
+
 def cmd_forecast_items_n(output, issue_data, since='', until='', n=10, simulations=10000, window=90):
     """ process forecast items n command """
     # pre-req
@@ -973,8 +1037,8 @@ def cmd_forecast_items_n(output, issue_data, since='', until='', n=10, simulatio
     ml, s = forecast_montecarlo_how_long_items(t, items=n, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
-        (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95)
-    ], columns=('Probability', 'days'), index='Probability')
+        (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
+    ], columns=('Probability', 'Days'), index='Probability')
 
     output.write(forecast_summary.to_string())
     output.write('\n---\n')
@@ -990,7 +1054,7 @@ def cmd_forecast_items_days(output, issue_data, since='', until='', days=10, sim
     mh, s = forecast_montecarlo_how_many_items(t, days=days, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
-        (f'{int(q*100)}%', s.Items.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95)
+        (f'{int(q*100)}%', s.Items.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Items'), index='Probability')
 
     output.write(forecast_summary.to_string())
@@ -1007,8 +1071,8 @@ def cmd_forecast_points_n(output, issue_data, since='', until='', n=10, simulati
     ml, s = forecast_montecarlo_how_long_points(t, points=n, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
-        (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95)
-    ], columns=('Probability', 'days'), index='Probability')
+        (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
+    ], columns=('Probability', 'Days'), index='Probability')
 
     output.write(forecast_summary.to_string())
     output.write('\n---\n')
@@ -1024,7 +1088,7 @@ def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, si
     mh, s = forecast_montecarlo_how_many_points(t, days=days, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
-        (f'{int(q*100)}%', s.Points.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95)
+        (f'{int(q*100)}%', s.Points.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'points'), index='Probability')
 
     output.write(forecast_summary.to_string())
@@ -1077,6 +1141,13 @@ def run(args):
     if args.command == 'correlation':
         cmd_correlation(output, i, since=since, until=until)
 
+    # survival
+    if args.command == 'survival' and args.survival_type == 'km':
+        cmd_survival_km(output, i, since=since, until=until)
+
+    if args.command == 'survival' and args.survival_type == 'wb':
+        cmd_survival_wb(output, i, since=since, until=until)
+
     # forecast
     if args.command == 'forecast' and args.forecast_type == 'items' and args.n:
         cmd_forecast_items_n(output, i, since=since, until=until, n=args.n, simulations=args.simulations, window=args.window)
@@ -1096,15 +1167,15 @@ def main():
     parse the command line arguments and run the utility
 
     """
-    parser = argparse.ArgumentParser(description='Analyze issue changelog data')
+    parser = argparse.ArgumentParser(description='Analyze changelog data')
     parser.add_argument('-f', '--file', type=argparse.FileType('r'), default='-', help='Data file to analyze (default: stdin)')
     parser.add_argument('-o', '--output', type=argparse.FileType('w'), default='-', help='File to output results (default: stdout)')
     parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only log warnings to console.')
 
     parser.add_argument('--exclude-weekends', action='store_true', help='Exclude weekends from cycle and lead time calculations')
-    parser.add_argument('--exclude-type', metavar='TYPE', action='append', help='Exclude one or more specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
-    parser.add_argument('--since', help='Only process issues created since date (format: YYYY-MM-DD)')
-    parser.add_argument('--until', help='Only process issues created up until date (format: YYYY-MM-DD)')
+    parser.add_argument('--exclude-type', metavar='TYPE', action='append', help='Exclude one or more specific types from the analysis (e.g., "Epic", "Bug", etc)')
+    parser.add_argument('--since', help='Only process work items created since date (format: YYYY-MM-DD)')
+    parser.add_argument('--until', help='Only process work items created up until date (format: YYYY-MM-DD)')
 
     subparsers = parser.add_subparsers(dest='command')
 
@@ -1125,6 +1196,11 @@ def main():
     subparser_cycletime = subparser_detail_subparsers.add_parser('cycletime', help='Analyze cycletime and output detail')  # NOQA
 
     subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')  # NOQA
+
+    subparser_survival = subparsers.add_parser('survival', help='Analyze the survival of work items')
+    subparser_survival_subparsers = subparser_survival.add_subparsers(dest='survival_type')
+    subparser_survival_km = subparser_survival_subparsers.add_parser('km', help='Analyze the survival of work items using Kaplan-Meier Estimation') # NOQA
+    subparser_survival_wb = subparser_survival_subparsers.add_parser('wb', help='Analyze the survival of work items using Weibull Estimation') # NOQA
 
     subparser_forecast = subparsers.add_parser('forecast', help='Forecast the future using Montecarlo simulation')
     subparser_forecast_subparsers = subparser_forecast.add_subparsers(dest='forecast_type')
@@ -1158,6 +1234,10 @@ def main():
 
     if args.command == 'detail' and args.detail_type is None:
         subparser_detail.print_help()
+        return
+
+    if args.command == 'survival' and args.survival_type is None:
+        subparser_survival.print_help()
         return
 
     if args.command == 'forecast' and args.forecast_type is None:
