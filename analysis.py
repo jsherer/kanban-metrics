@@ -542,7 +542,7 @@ def process_wip_data(issue_data, since='', until=''):
 
     date_range = pandas.date_range(start=since, end=until, closed='left', freq='D')
 
-    wip = pandas.DataFrame(columns=['Date', 'WIP'])
+    wip = pandas.DataFrame(columns=['Date', 'Work In Progress'])
 
     for date in date_range:
         date_changes = wip_data
@@ -551,26 +551,26 @@ def process_wip_data(issue_data, since='', until=''):
 
         row = dict()
         row['Date'] = date
-        row['WIP'] = len(date_changes)
+        row['Work In Progress'] = len(date_changes)
         wip = wip.append(row, ignore_index=True)
 
     wip = wip.set_index('Date')
     wip = wip.reindex(date_range).fillna(0).astype(int).rename_axis('Date')
 
-    wip['Moving Average (10 days)'] = wip['WIP'].rolling(window=10).mean()
-    wip['Moving Standard Deviation (10 days)'] = wip['WIP'].rolling(window=10).std()
-    wip['Average'] = wip['WIP'].mean()
-    wip['Standard Deviation'] = wip['WIP'].std()
+    wip['Moving Average (10 days)'] = wip['Work In Progress'].rolling(window=10).mean()
+    wip['Moving Standard Deviation (10 days)'] = wip['Work In Progress'].rolling(window=10).std()
+    wip['Average'] = wip['Work In Progress'].mean()
+    wip['Standard Deviation'] = wip['Work In Progress'].std()
 
     # resample to also provide how much wip we have at the end of each week
     wip_per_week = pandas.DataFrame(
-        wip['WIP'].resample('W-Mon').last()
+        wip['Work In Progress'].resample('W-Mon').last()
     ).reset_index()
 
-    wip_per_week['Moving Average (4 weeks)'] = wip_per_week['WIP'].rolling(window=4).mean()
-    wip_per_week['Moving Standard Deviation (4 weeks)'] = wip_per_week['WIP'].rolling(window=4).std()
-    wip_per_week['Average'] = wip_per_week['WIP'].mean()
-    wip_per_week['Standard Deviation'] = wip_per_week['WIP'].std()
+    wip_per_week['Moving Average (4 weeks)'] = wip_per_week['Work In Progress'].rolling(window=4).mean()
+    wip_per_week['Moving Standard Deviation (4 weeks)'] = wip_per_week['Work In Progress'].rolling(window=4).std()
+    wip_per_week['Average'] = wip_per_week['Work In Progress'].mean()
+    wip_per_week['Standard Deviation'] = wip_per_week['Work In Progress'].std()
 
     return wip, wip_per_week
 
@@ -599,8 +599,10 @@ def process_wip_age_data(issue_data, since='', until=''):
 
     today = pandas.to_datetime(until)
 
+    age_data['First In Progress'] = age_data['in_progress_day']
+    age_data['Stage'] = age_data['last_issue_status']
+    age_data['Age in Stage'] = (today - age_data['last_issue_status_change_date']) / pandas.to_timedelta(1, unit='D')
     age_data['Age'] = (today - age_data['in_progress']) / pandas.to_timedelta(1, unit='D')
-    age_data['Age In Stage'] = (today - age_data['last_issue_status_change_date']) / pandas.to_timedelta(1, unit='D')
     age_data['Average'] = age_data['Age'].mean()
     age_data['Standard Deviation'] = age_data['Age'].std()
     age_data['P50'] = age_data['Age'].quantile(0.5)
@@ -872,13 +874,13 @@ def cmd_summary(output, issue_data, since='', until=''):
         '# Throughput (Weekly):',
         throughput_weekly.to_string(),
         '---',
-        '# Work in Progess (Daily):',
+        '# Work In Progess (Daily):',
         wip.to_string(),
         '---',
-        '# Work in Progess (Weekly):',
+        '# Work In Progess (Weekly):',
         wip_weekly.to_string(),
         '---',
-        f'# Work in Progess Age (ending {until}):',
+        f'# Work In Progess Age (ending {until}):',
         wip_age.to_string(),
         '---',
     ])
@@ -949,22 +951,22 @@ def cmd_wip(output, issue_data, wip_type='', since='', until=''):
 
     if wip_type == 'daily':
         output.writelines('%s\n' % line for line in [
-            '# Work in Progress (Daily):',
+            '# Work In Progress (Daily):',
             w.to_string(),
             '---',
         ])
 
     if wip_type == 'weekly':
         output.writelines('%s\n' % line for line in [
-            '# Work in Progress (Weekly):',
+            '# Work In Progress (Weekly):',
             ww.to_string(),
             '---',
         ])
 
     if wip_type == 'aging':
         output.writelines('%s\n' % line for line in [
-            '# Work in Progess Age:',
-            a.to_string(),
+            '# Work In Progess Age:',
+            a[['First In Progress', 'Stage', 'Age in Stage', 'Age']].to_string(),
             '---',
         ])
 
