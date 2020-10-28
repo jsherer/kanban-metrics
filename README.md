@@ -29,7 +29,7 @@ python jira.py [project_key] [since_date]
 ## Analyzing Data from the Command Line
 
 ```
-python analysis.py -f data.csv summary
+python analysis.py -f data/data.csv summary
 ```
 
 ## Analyzing Data from Jupyter

@@ -105,9 +105,9 @@ def read_data(path, exclude_types=None, since='', until=''):
 
     # filter out issues before since date and after until
     if since:
-        data = data[data['issue_created_date'] >= since]
+        data = data[data['issue_created_date'] >= pandas.to_datetime(since)]
     if until:
-        data = data[data['issue_created_date'] < until]
+        data = data[data['issue_created_date'] < pandas.to_datetime(until)]
 
     # count how many changelog items were filtered
     n3 = len(data)
@@ -123,8 +123,10 @@ def read_data(path, exclude_types=None, since='', until=''):
         max_date = data['issue_created_date'].max().strftime('%Y-%m-%d')
         status_min_date = data['status_change_date'].min().strftime('%Y-%m-%d')
         status_max_date = data['status_change_date'].max().strftime('%Y-%m-%d')
+        num_issues = data['issue_key'].nunique()
+        logger.info(f'-> {n3} changelog items remain created from {min_date} to {max_date} with status changes from {status_min_date} to {status_max_date}')
+        logger.info(f'-> {num_issues} unique issues loaded since {since}, ready for analysis')
 
-    logger.info(f'-> {n3} changelog items remain created from {min_date} to {max_date} with status changes from {status_min_date} to {status_max_date}')
     logger.info('---')
 
     return data, dupes, filtered
@@ -261,10 +263,10 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
 
     # filter out issues before since date and after until
     if since:
-        data = data[data['issue_created_date'] >= since]
+        data = data[data['issue_created_date'] >= pandas.to_datetime(since)]
 
     if until:
-        data = data[data['issue_created_date'] < until]
+        data = data[data['issue_created_date'] < pandas.to_datetime(until)]
 
     issues = collections.defaultdict(list)
     issue_ids = dict()
@@ -474,10 +476,7 @@ def process_throughput_data(issue_data, since='', until=''):
 
     throughput = pandas.crosstab(throughput_data.complete_day, issue_data.issue_type, colnames=[None]).reset_index()
 
-    date_range = pandas.date_range(
-        start=throughput.complete_day.min(),
-        end=throughput.complete_day.max(), freq='D'
-    )
+    date_range = pandas.date_range(start=since, end=until, closed='left', freq='D')
 
     cols = set(throughput.columns)
     if 'complete_day' in cols:
@@ -734,6 +733,216 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
     return distribution_how, samples
 
 
+def cmd_summary(output, issue_data, since='', until=''):
+    """ process summary command """
+    # current cycle time
+    c = process_cycle_data(issue_data, since=since, until=until)
+
+    # current throughput
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    # current wip
+    w, ww = process_wip_data(issue_data, since=since, until=until)
+    a = process_wip_age_data(issue_data, since=since, until=until)
+
+    output.writelines(f'{line}\n' for line in [
+        'Cycle Time:',
+        '-> Average: %.2f' % c['Average'].iat[-1],
+        '-> Standard Deviation: %.2f' % c['Standard Deviation'].iat[-1],
+        '-> Moving Average (10 items): %.2f' % c['Moving Average (10 items)'].iat[-1],
+        '-> Moving Standard Deviation (10 items): %.2f' % c['Moving Standard Deviation (10 items)'].iat[-1],
+        '---',
+        'Throughput (Daily):',
+        '-> Average: %.2f' % t['Average'].iat[-1],
+        '-> Standard Deviation: %.2f' % t['Standard Deviation'].iat[-1],
+        '-> Moving Average (10 days): %.2f' % t['Moving Average (10 days)'].iat[-1],
+        '-> Moving Standard Deviation (10 days): %.2f' % t['Moving Standard Deviation (10 days)'].iat[-1],
+        '---',
+        'Throughput (Weekly):',
+        '-> Average: %.2f' % tw['Average'].iat[-1],
+        '-> Standard Deviation: %.2f' % tw['Standard Deviation'].iat[-1],
+        '-> Moving Average (4 weeks): %.2f' % tw['Moving Average (4 weeks)'].iat[-1],
+        '-> Moving Standard Deviation (4 weeks): %.2f' % tw['Moving Standard Deviation (4 weeks)'].iat[-1],
+        '---',
+        'Work in Progess (Daily):',
+        '-> Average: %.2f' % w['Average'].iat[-1],
+        '-> Standard Deviation: %.2f' % w['Standard Deviation'].iat[-1],
+        '-> Moving Average (10 days): %.2f' % w['Moving Average (10 days)'].iat[-1],
+        '-> Moving Standard Deviation (10 days): %.2f' % w['Moving Standard Deviation (10 days)'].iat[-1],
+        '---',
+        'Work in Progess (Weekly):',
+        '-> Average: %.2f' % ww['Average'].iat[-1],
+        '-> Standard Deviation: %.2f' % ww['Standard Deviation'].iat[-1],
+        '-> Moving Average (4 weeks): %.2f' % ww['Moving Average (4 weeks)'].iat[-1],
+        '-> Moving Standard Deviation (4 weeks): %.2f' % ww['Moving Standard Deviation (4 weeks)'].iat[-1],
+        '---',
+        f'Work in Progess Age (ending {until}):',
+        '-> Average: %.2f' % a['Average'].iat[-1],
+        '-> 50th Percentile: %.2f' % a['P50'].iat[-1],
+        '-> 75th Percentile: %.2f' % a['P75'].iat[-1],
+        '-> 85th Percentile: %.2f' % a['P85'].iat[-1],
+        '-> 95th Percentile: %.2f' % a['P95'].iat[-1],
+        '---',
+    ])
+
+
+def cmd_correlation(output, issue_data, since='', until=''):
+    """ process correlation command """
+    points = issue_data['issue_points'].values.astype(float)
+    lead_time = issue_data['lead_time_days'].values.astype(float)
+    cycle_time = issue_data['cycle_time_days'].values.astype(float)
+    cycle_result = process_correlation(points, cycle_time)
+    lead_result = process_correlation(points, lead_time)
+
+    output.writelines('%s\n' % line for line in [
+        'Points:',
+        '-> Observations: %s' % issue_data['issue_points'].count(),
+        '-> Min: %s' % issue_data['issue_points'].min(),
+        '-> Max: %s' % issue_data['issue_points'].max(),
+        '-> Average: %.2f' % issue_data['issue_points'].mean(),
+        '-> Standard Deviation: %.2f' % issue_data['issue_points'].std(),
+        '---',
+        'Point Correlation to Cycle Time:',
+        '-> Observations (n): %s' % cycle_result['n'].iat[0],
+        '-> Correlation Coefficient (r): %.2f' % cycle_result['r'].iat[0],
+        '-> Determination Coefficient (r^2): %.2f' % cycle_result['r2'].iat[0],
+        '-> P-Value (p): %.2f' % cycle_result['p-val'].iat[0],
+        '-> Likelihood of detecting effect (power): %.2f' % cycle_result['power'].iat[0],
+        '-> Correlation %s significant' % ('is' if cycle_result['p-val'].iat[0] <= 0.05 else 'is not'),
+        '---',
+        'Point Correlation to Lead Time:',
+        '-> Observations (n): %s' % lead_result['n'].iat[0],
+        '-> Correlation Coefficient (r): %.2f' % lead_result['r'].iat[0],
+        '-> Determination Coefficient (r^2): %.2f' % lead_result['r2'].iat[0],
+        '-> P-Value (p): %.2f' % lead_result['p-val'].iat[0],
+        '-> Likelihood of detecting effect (power): %.2f' % lead_result['power'].iat[0],
+        '-> Correlation %s significant' % ('is' if lead_result['p-val'].iat[0] <= 0.05 else 'is not'),
+        '---',
+    ])
+
+
+def cmd_flow(output, data, since='', until='', status_columns=None):
+    """ process flow command """
+    f = process_flow_data(data, since=since, until=until, status_columns=status_columns)
+    output.writelines('%s\n' % line for line in [
+        'Cumulative Flow:',
+        f.to_string(),
+        '---',
+    ])
+
+
+def cmd_wip(output, issue_data, wip_type='', since='', until=''):
+    """ process wip command """
+    # current wip
+    w, ww = process_wip_data(issue_data, since=since, until=until)
+    a = process_wip_age_data(issue_data, since=since, until=until)
+
+    if wip_type == 'daily':
+        output.writelines('%s\n' % line for line in [
+            'Work in Progress (Daily):',
+            w.to_string(),
+            '---',
+        ])
+
+    if wip_type == 'weekly':
+        output.writelines('%s\n' % line for line in [
+            'Work in Progress (Weekly):',
+            ww.to_string(),
+            '---',
+        ])
+
+    if wip_type == 'aging':
+        output.writelines('%s\n' % line for line in [
+            'Work in Progess Age:',
+            a.to_string(),
+            '---',
+        ])
+
+
+def cmd_throughput(output, issue_data, since='', until='', throughput_type=''):
+    """ process throughput command """
+    # current throughput
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    if throughput_type == 'daily':
+        output.writelines('%s\n' % line for line in [
+            'Throughput (Daily):',
+            t.to_string(),
+            '---',
+        ])
+
+    if throughput_type == 'weekly':
+        output.writelines('%s\n' % line for line in [
+            'Throughput (Weekly):',
+            tw.to_string(),
+            '---',
+        ])
+
+
+def cmd_cycletime(output, issue_data, since='', until=''):
+    """ process cycletime command """
+    # current cycle time
+    c = process_cycle_data(issue_data, since=since, until=until)
+
+    output.writelines('%s\n' % line for line in [
+        'Cycle Time:',
+        c.to_string(),
+        '---',
+    ])
+
+
+def cmd_forecast_items_n(output, issue_data, since='', until='', n=10, simulations=10000, window=90):
+    """ process forecast items n command """
+    # pre-req
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    # analysis
+    output.write(f'Montecarlo Forecast: How long to complete {n} items?:\n')
+    ml, s = forecast_montecarlo_how_long_items(t, items=n, simulations=simulations, window=window)
+    for q in (0.25, 0.5, 0.75, 0.85, 0.95):
+        output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
+    output.write('---\n')
+
+
+def cmd_forecast_items_days(output, issue_data, since='', until='', days=10, simulations=10000, window=90):
+    """ process forecast items days command """
+    # pre-req
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    # analysis
+    output.write(f'Montecarlo Forecast: How many items can be completed in {days} days?\n')
+    mh, s = forecast_montecarlo_how_many_items(t, days=days, simulations=simulations, window=window)
+    for q in (0.25, 0.5, 0.75, 0.85, 0.95):
+        output.write(f'-> {int(q*100)}%% Probability: %s Items\n' % s.Items.quantile(1-q))
+    output.write('---\n')
+
+
+def cmd_forecast_points_n(output, issue_data, since='', until='', n=10, simulations=10000, window=90):
+    """ process forecast points n command """
+    # pre-req
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    # analysis
+    output.write(f'Montecarlo Forecast: How long to complete {n} points?:\n')
+    ml, s = forecast_montecarlo_how_long_points(t, points=n, simulations=simulations, window=window)
+    for q in (0.25, 0.5, 0.75, 0.85, 0.95):
+        output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
+    output.write('---\n')
+
+
+def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, simulations=10000, window=90):
+    """ process forecast points days command """
+    # pre-req
+    t, tw = process_throughput_data(issue_data, since=since, until=until)
+
+    # analysis
+    output.write(f'Montecarlo Forecast: How many points can be completed in {days} days?\n')
+    mh, s = forecast_montecarlo_how_many_points(t, days=days, simulations=simulations, window=window)
+    for q in (0.25, 0.5, 0.75, 0.85, 0.95):
+        output.write(f'-> {int(q*100)}%% Probability: %s Points\n' % s.Points.quantile(1-q))
+    output.write('---\n')
+
+
 def run(args):
     """
     run the utility in response to the command line arguments
@@ -754,199 +963,40 @@ def run(args):
     if not until:
         until = max(data['issue_created_date'].max(), data['status_change_date'].max()) + pandas.Timedelta(1, 'D')
 
+    output = args.output
+
     # preprocess issue data
     i, _ = process_issue_data(data, since=since, until=until, exclude_weekends=exclude_weekends)
 
     if args.command == 'summary':
-        # current cycle time
-        c = process_cycle_data(i, since=since, until=until)
-
-        # current throughput
-        t, tw = process_throughput_data(i, since=since, until=until)
-
-        # current wip
-        w, ww = process_wip_data(i, since=since, until=until)
-        a = process_wip_age_data(i, since=since, until=until)
-
-        args.output.writelines(f'{line}\n' for line in [
-            'Cycle Time:',
-            '-----------',
-            '-> Average: %.2f' % c['Average'].iat[-1],
-            '-> Standard Deviation: %.2f' % c['Standard Deviation'].iat[-1],
-            '-> Moving Average (10 items): %.2f' % c['Moving Average (10 items)'].iat[-1],
-            '-> Moving Standard Deviation (10 items): %.2f' % c['Moving Standard Deviation (10 items)'].iat[-1],
-            '',
-            'Throughput (Daily):',
-            '-------------------',
-            '-> Average: %.2f' % t['Average'].iat[-1],
-            '-> Standard Deviation: %.2f' % t['Standard Deviation'].iat[-1],
-            '-> Moving Average (10 days): %.2f' % t['Moving Average (10 days)'].iat[-1],
-            '-> Moving Standard Deviation (10 days): %.2f' % t['Moving Standard Deviation (10 days)'].iat[-1],
-            '',
-            'Throughput (Weekly):',
-            '--------------------',
-            '-> Average: %.2f' % tw['Average'].iat[-1],
-            '-> Standard Deviation: %.2f' % tw['Standard Deviation'].iat[-1],
-            '-> Moving Average (4 weeks): %.2f' % tw['Moving Average (4 weeks)'].iat[-1],
-            '-> Moving Standard Deviation (4 weeks): %.2f' % tw['Moving Standard Deviation (4 weeks)'].iat[-1],
-            '',
-            'Work in Progess (Daily):',
-            '------------------------',
-            '-> Average: %.2f' % w['Average'].iat[-1],
-            '-> Standard Deviation: %.2f' % w['Standard Deviation'].iat[-1],
-            '-> Moving Average (10 days): %.2f' % w['Moving Average (10 days)'].iat[-1],
-            '-> Moving Standard Deviation (10 days): %.2f' % w['Moving Standard Deviation (10 days)'].iat[-1],
-            '',
-            'Work in Progess (Weekly):',
-            '-------------------------',
-            '-> Average: %.2f' % ww['Average'].iat[-1],
-            '-> Standard Deviation: %.2f' % ww['Standard Deviation'].iat[-1],
-            '-> Moving Average (4 weeks): %.2f' % ww['Moving Average (4 weeks)'].iat[-1],
-            '-> Moving Standard Deviation (4 weeks): %.2f' % ww['Moving Standard Deviation (4 weeks)'].iat[-1],
-            '',
-            f'Work in Progess Age (ending {until}):',
-            '--------------------------------------',
-            '-> Average: %.2f' % a['Average'].iat[-1],
-            '-> 50th Percentile: %.2f' % a['P50'].iat[-1],
-            '-> 75th Percentile: %.2f' % a['P75'].iat[-1],
-            '-> 85th Percentile: %.2f' % a['P85'].iat[-1],
-            '-> 95th Percentile: %.2f' % a['P95'].iat[-1],
-            '',
-        ])
+        cmd_summary(output, i, since=since, until=until)
 
     if args.command == 'correlation':
-        points = i['issue_points'].values.astype(float)
-        lead_time = i['lead_time_days'].values.astype(float)
-        cycle_time = i['cycle_time_days'].values.astype(float)
-        cycle_result = process_correlation(points, cycle_time)
-        lead_result = process_correlation(points, lead_time)
-
-        args.output.writelines('%s\n' % line for line in [
-            'Points:',
-            '-------',
-            '-> Observations: %s' % i['issue_points'].count(),
-            '-> Min: %s' % i['issue_points'].min(),
-            '-> Max: %s' % i['issue_points'].max(),
-            '-> Average: %.2f' % i['issue_points'].mean(),
-            '-> Standard Deviation: %.2f' % i['issue_points'].std(),
-            '',
-            'Point Correlation to Cycle Time:',
-            '--------------------------------',
-            '-> Observations (n): %s' % cycle_result['n'].iat[0],
-            '-> Correlation Coefficient (r): %.2f' % cycle_result['r'].iat[0],
-            '-> Determination Coefficient (r^2): %.2f' % cycle_result['r2'].iat[0],
-            '-> P-Value (p): %.2f' % cycle_result['p-val'].iat[0],
-            '-> Likelihood of detecting effect (power): %.2f' % cycle_result['power'].iat[0],
-            '-> Correlation %s significant' % ('is' if cycle_result['p-val'].iat[0] <= 0.05 else 'is not'),
-            '',
-            'Point Correlation to Lead Time:',
-            '-------------------------------',
-            '-> Observations (n): %s' % lead_result['n'].iat[0],
-            '-> Correlation Coefficient (r): %.2f' % lead_result['r'].iat[0],
-            '-> Determination Coefficient (r^2): %.2f' % lead_result['r2'].iat[0],
-            '-> P-Value (p): %.2f' % lead_result['p-val'].iat[0],
-            '-> Likelihood of detecting effect (power): %.2f' % lead_result['power'].iat[0],
-            '-> Correlation %s significant' % ('is' if lead_result['p-val'].iat[0] <= 0.05 else 'is not'),
-        ])
+        cmd_correlation(output, i, since=since, until=until)
 
     if args.command == 'flow':
-        f = process_flow_data(data, since=since, until=until, status_columns=args.status)
-        args.output.writelines('%s\n' % line for line in [
-            'Cumulative Flow:',
-            '----------------',
-            f.to_string()
-        ])
+        cmd_flow(output, data, since=since, until=until, status_columns=args.status)
 
     if args.command == 'wip':
-        # current wip
-        w, ww = process_wip_data(i, since=since, until=until)
-        a = process_wip_age_data(i, since=since, until=until)
-
-        if args.type == 'daily':
-            args.output.writelines('%s\n' % line for line in [
-                'Work in Progress (Daily):',
-                '-------------------------',
-                w.to_string(),
-            ])
-
-        if args.type == 'weekly':
-            args.output.writelines('%s\n' % line for line in [
-                'Work in Progress (Weekly):',
-                '--------------------------',
-                ww.to_string(),
-            ])
-
-        if args.type == 'aging':
-            args.output.writelines('%s\n' % line for line in [
-                'Work in Progess Age:',
-                '--------------------',
-                a.to_string()
-            ])
+        cmd_wip(output, i, since=since, until=until, wip_type=args.type)
 
     if args.command == 'throughput':
-        # current throughput
-        t, tw = process_throughput_data(i, since=since, until=until)
-
-        if args.type == 'daily':
-            args.output.writelines('%s\n' % line for line in [
-                'Throughput (Daily):',
-                '-------------------',
-                t.to_string(),
-            ])
-
-        if args.type == 'weekly':
-            args.output.writelines('%s\n' % line for line in [
-                'Throughput (Weekly):',
-                '--------------------',
-                tw.to_string(),
-            ])
+        cmd_throughput(output, i, since=since, until=until, throughput_type=args.type)
 
     if args.command == 'cycletime':
-        # current cycle time
-        c = process_cycle_data(i, since=since, until=until)
-
-        args.output.writelines('%s\n' % line for line in [
-            'Cycle Time:',
-            '-----------',
-            c.to_string(),
-        ])
+        cmd_cycletime(output, i, since=since, until=until)
 
     if args.command == 'forecast' and args.forecast_type == 'items':
-        # pre-req
-        t, tw = process_throughput_data(i, since=since, until=until)
-
-        # analysis
         if args.n:
-            args.output.write(f'Montecarlo Forecast: How long to complete {args.n} items?:\n')
-            args.output.write('--------------------------------------------------------------\n')
-            ml, s = forecast_montecarlo_how_long_items(t, items=args.n, simulations=args.simulations, window=args.window)
-            for q in (0.25, 0.5, 0.75, 0.85, 0.95):
-                args.output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
-
+            cmd_forecast_items_n(output, i, since=since, until=until, n=args.n, simulations=args.simulations, window=args.window)
         if args.days:
-            args.output.write(f'Montecarlo Forecast: How many items can be completed in {args.days} days?\n')
-            args.output.write('-------------------------------------------------------------------------\n')
-            mh, s = forecast_montecarlo_how_many_items(t, days=args.days, simulations=args.simulations, window=args.window)
-            for q in (0.25, 0.5, 0.75, 0.85, 0.95):
-                args.output.write(f'-> {int(q*100)}%% Probability: %s Items\n' % s.Items.quantile(1-q))
+            cmd_forecast_items_days(output, i, since=since, until=until, days=args.days, simulations=args.simulations, window=args.window)
 
     if args.command == 'forecast' and args.forecast_type == 'points':
-        # pre-req
-        t, tw = process_throughput_data(i, since=since, until=until)
-
         if args.n:
-            args.output.write(f'Montecarlo Forecast: How long to complete {args.n} points?\n')
-            args.output.write('---------------------------------------------------------------\n')
-            mlp, s = forecast_montecarlo_how_long_points(t, items=args.n, simulations=args.simulations, window=args.window)
-            for q in (0.25, 0.5, 0.75, 0.85, 0.95):
-                args.output.write(f'-> {int(q*100)}%% Probability: %s Days\n' % s.Days.quantile(q))
-
+            cmd_forecast_points_n(output, i, since=since, until=until, n=args.n, simulations=args.simulations, window=args.window)
         if args.days:
-            args.output.write(f'Montecarlo Forecast: How many points can be completed in {args.days} days?\n')
-            args.output.write('--------------------------------------------------------------------------\n',)
-            mhp, s = forecast_montecarlo_how_many_points(t, days=args.days, simulations=args.simulations, window=args.window)
-            for q in (0.25, 0.5, 0.75, 0.85, 0.95):
-                args.output.write(f'-> {int(q*100)}%% Probability: %s Points\n' % s.Points.quantile(1-q))
+            cmd_forecast_points_days(output, i, since=since, until=until, days=args.days, simulations=args.simulations, window=args.window)
 
 
 def main():
@@ -957,10 +1007,10 @@ def main():
     parser = argparse.ArgumentParser(description='Analyze issue changelog data')
     parser.add_argument('-f', '--file', type=argparse.FileType('r'), default='-', help='Data file to analyze (default: stdin)')
     parser.add_argument('-o', '--output', type=argparse.FileType('w'), default='-', help='File to output results (default: stdout)')
-    parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only output warnings to console.')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Be quiet and only log warnings to console.')
 
     parser.add_argument('--exclude-weekends', action='store_true', help='Exclude weekends from cycle and lead time calculations')
-    parser.add_argument('--exclude-type', action='append', help='Exclude one or more specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
+    parser.add_argument('--exclude-type', metavar='TYPE', action='append', help='Exclude one or more specific issue types from the analysis (e.g., "Epic", "Bug", etc)')
     parser.add_argument('--since', help='Only process issues created since date (format: YYYY-MM-DD)')
     parser.add_argument('--until', help='Only process issues created up until date (format: YYYY-MM-DD)')
 
