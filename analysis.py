@@ -7,6 +7,7 @@ compute Kanban metrics analysis. (see jira.py)
 from __future__ import print_function
 
 import argparse
+import code
 import collections
 import logging
 
@@ -1097,6 +1098,13 @@ def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, si
     output.write('\n---\n')
 
 
+def cmd_shell(output, issue_data, since='', until='', args=None):
+    logger.info('Creating interactive Python shell...')
+    logger.info('-> locals: %s' % ', '.join(locals().keys()))
+    logger.info('---')
+    code.interact(local=locals())
+
+
 def run(args):
     """
     run the utility in response to the command line arguments
@@ -1163,6 +1171,10 @@ def run(args):
     if args.command == 'forecast' and args.forecast_type == 'points' and args.days:
         cmd_forecast_points_days(output, i, since=since, until=until, days=args.days, simulations=args.simulations, window=args.window)
 
+    # shell
+    if args.command == 'shell':
+        cmd_shell(output, i, since=since, until=until, args=args)
+
 
 def main():
     """
@@ -1221,6 +1233,8 @@ def main():
     subparser_forecast_points_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"')
     subparser_forecast_points.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_points.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
+
+    subparser_shell = subparsers.add_parser('shell', help='Load the data into an interactive Python shell')  # NOQA
 
     args = parser.parse_args()
 
