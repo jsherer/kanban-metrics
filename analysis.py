@@ -9,6 +9,7 @@ from __future__ import print_function
 import argparse
 import code
 import collections
+import functools
 import logging
 
 import lifelines
@@ -17,6 +18,7 @@ import matplotlib.pyplot
 import numpy
 import pandas
 import pingouin
+import seaborn
 
 from pandas.plotting import register_matplotlib_converters
 
@@ -144,11 +146,11 @@ def read_data(path, exclude_types=None, since='', until=''):
     return data, dupes, filtered
 
 
-def process_flow_data(data, since='', until='', status_columns=None):
+def process_flow_data(data, since='', until=''):
     """ process cumulative flow statuses from changelog data """
 
     if data.empty:
-        logger.warning('Warning: Data for flow analysis is empty')
+        logger.warning('Data for flow analysis is empty')
         return
 
     if not since or not until:
@@ -196,20 +198,65 @@ def process_flow_data(data, since='', until='', status_columns=None):
     f['Date'] = f['Date'].dt.normalize()
     f['Date'] = f['Date'].dt.date
 
-    if status_columns:
-        flow_columns = ['Date'] + [status for status in status_columns if status in f]
-        f = f[flow_columns]
-
     f = f.set_index('Date')
 
     return f
 
 
-def process_flow_category_data(data, since='', until='', status_columns=None):
+def plot_flow_data(flow_data, status_columns=None):
+    """ plot the cumulative flow diagram """
+    STATUS_ORDER = [status for status in status_columns if status in flow_data]
+    ending_status = STATUS_ORDER[-1]
+    status_columns = list(reversed(STATUS_ORDER))
+    flow_columns = ['Date'] + status_columns
+    flow = flow_data.reset_index()[flow_columns]
+
+    y_min = flow[ending_status].min()
+    y_max = flow[STATUS_ORDER].max().sum()
+
+    flow_agg = flow[flow_columns]
+    x = flow_agg['Date'] = pandas.to_datetime(flow_agg['Date'])
+
+    ys = []
+    for status in reversed(STATUS_ORDER):
+        lasty = ys[-1] if ys else 0
+        y = flow_agg[status] = (flow_agg[status] + lasty).astype(float)
+        ys.append(y)
+
+    # melt the data to be able to be sent to lineplot
+    xyz = pandas.melt(flow_agg, ['Date'])
+    xyz['value'] = xyz['value'].astype(float)
+
+    matplotlib.pyplot.figure(dpi=150, figsize=(15, 10))
+
+    ax = seaborn.lineplot(x='Date', y='value', hue='variable', data=xyz)
+
+    # create the area fills between lines
+    lasty = 0
+    for i, y in enumerate(ys):
+        ax.fill_between(x, lasty, y, color=f'C{i}', alpha=0.7, interpolate=False)
+        lasty = y
+
+    ax.set_title("Cumulative Flow Since {}".format(flow_agg['Date'].min().strftime('%Y-%m-%d')), loc='left', fontdict={
+                'fontsize': 18, 'fontweight': 'semibold'})
+
+    ax.set_xlabel('Timeline')
+    ax.set_ylabel('Items')
+
+    tenth = (y_max-y_min)*0.1
+
+    ax.set_ylim([y_min - tenth, y_max + 2*tenth])
+
+    logger.info('Creating cumulative flow graph...')
+    ax.figure.savefig('fig.png')
+    logger.info('-> graph written to `fig.png`')
+
+
+def process_flow_category_data(data, since='', until=''):
     """ process cumulative flow status categories from changelog data """
 
     if data.empty:
-        logger.warning('Warning: Data for flow analysis is empty')
+        logger.warning('Data for flow analysis is empty')
         return
 
     if not since or not until:
@@ -257,10 +304,6 @@ def process_flow_category_data(data, since='', until='', status_columns=None):
     f['Date'] = f['Date'].dt.normalize()
     f['Date'] = f['Date'].dt.date
 
-    if status_columns:
-        flow_columns = ['Date'] + [status for status in status_columns if status in f]
-        f = f[flow_columns]
-
     f = f.set_index('Date')
 
     return f
@@ -274,7 +317,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
 
     """
     if data.empty:
-        logger.warning('Warning: Data for issue analysis is empty')
+        logger.warning('Data for issue analysis is empty')
         return
 
     # filter out issues before since date and after until
@@ -444,13 +487,47 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
     return issue_data, extra
 
 
+def process_lead_data(issue_data, since='', until=''):
+    """
+    process lead time data from issue data
+
+    """
+    if issue_data.empty:
+        logger.warning('Data for lead time analysis is empty')
+        return
+
+    lead_data = issue_data.copy()
+    lead_data = lead_data.sort_values(['complete'])
+
+    if since:
+        lead_data = lead_data[lead_data['complete_day'] >= pandas.to_datetime(since)]
+
+    if until:
+        lead_data = lead_data[lead_data['complete_day'] < pandas.to_datetime(until)]
+
+    # drop issues with a lead time less than 1 hour
+    lead_data = lead_data[lead_data['lead_time_days'] > (1/24.0)]
+
+    data = pandas.DataFrame()
+    data['Create Date'] = lead_data['new_day']
+    data['Complete Date'] = lead_data['complete_day']
+    data['Lead Time'] = lead_data['lead_time_days']
+    data['Moving Average (10 items)'] = lead_data['lead_time_days'].rolling(window=10).mean()
+    data['Moving Standard Deviation (10 items)'] = lead_data['lead_time_days'].rolling(window=10).std()
+    data['Average'] = lead_data['lead_time_days'].mean()
+    data['Standard Deviation'] = lead_data['lead_time_days'].std()
+    data = data.rename_axis('Work Item')
+
+    return data
+
+
 def process_cycle_data(issue_data, since='', until=''):
     """
     process cycle time data from issue data
 
     """
     if issue_data.empty:
-        logger.warning('Warning: Data for cycle analysis is empty')
+        logger.warning('Data for cycle analysis is empty')
         return
 
     cycle_data = issue_data.copy()
@@ -465,12 +542,17 @@ def process_cycle_data(issue_data, since='', until=''):
     # drop issues with a cycle time less than 1 hour
     cycle_data = cycle_data[cycle_data['cycle_time_days'] > (1/24.0)]
 
-    cycle_data['Moving Average (10 items)'] = cycle_data['cycle_time_days'].rolling(window=10).mean()
-    cycle_data['Moving Standard Deviation (10 items)'] = cycle_data['cycle_time_days'].rolling(window=10).std()
-    cycle_data['Average'] = cycle_data['cycle_time_days'].mean()
-    cycle_data['Standard Deviation'] = cycle_data['cycle_time_days'].std()
+    data = pandas.DataFrame()
+    data['In Progress Date'] = cycle_data['in_progress_day']
+    data['Complete Date'] = cycle_data['complete_day']
+    data['Cycle Time'] = cycle_data['cycle_time_days']
+    data['Moving Average (10 items)'] = cycle_data['cycle_time_days'].rolling(window=10).mean()
+    data['Moving Standard Deviation (10 items)'] = cycle_data['cycle_time_days'].rolling(window=10).std()
+    data['Average'] = cycle_data['cycle_time_days'].mean()
+    data['Standard Deviation'] = cycle_data['cycle_time_days'].std()
+    data = data.rename_axis('Work Item')
 
-    return cycle_data
+    return data
 
 
 def process_throughput_data(issue_data, since='', until=''):
@@ -479,7 +561,7 @@ def process_throughput_data(issue_data, since='', until=''):
 
     """
     if issue_data.empty:
-        logger.warning('Warning: Data for throughput analysis is empty')
+        logger.warning('Data for throughput analysis is empty')
         return
 
     throughput_data = issue_data.copy()
@@ -517,13 +599,12 @@ def process_throughput_data(issue_data, since='', until=''):
 
     throughput_per_week = pandas.DataFrame(
         throughput['Throughput'].resample('W-Mon').sum()
-    ).reset_index()
+    )
 
     throughput_per_week['Moving Average (4 weeks)'] = throughput_per_week['Throughput'].rolling(window=4).mean()
     throughput_per_week['Moving Standard Deviation (4 weeks)'] = throughput_per_week['Throughput'].rolling(window=4).std()
     throughput_per_week['Average'] = throughput_per_week['Throughput'].mean()
     throughput_per_week['Standard Deviation'] = throughput_per_week['Throughput'].std()
-    throughput_per_week = throughput_per_week.set_index('Date')
 
     return throughput, throughput_per_week
 
@@ -534,7 +615,7 @@ def process_wip_data(issue_data, since='', until=''):
 
     """
     if issue_data.empty:
-        logger.warning('Warning: Data for wip analysis is empty')
+        logger.warning('Data for wip analysis is empty')
         return
 
     wip_data = issue_data[issue_data['in_progress_day'].notnull()]
@@ -566,7 +647,7 @@ def process_wip_data(issue_data, since='', until=''):
     # resample to also provide how much wip we have at the end of each week
     wip_per_week = pandas.DataFrame(
         wip['Work In Progress'].resample('W-Mon').last()
-    ).reset_index()
+    )
 
     wip_per_week['Moving Average (4 weeks)'] = wip_per_week['Work In Progress'].rolling(window=4).mean()
     wip_per_week['Moving Standard Deviation (4 weeks)'] = wip_per_week['Work In Progress'].rolling(window=4).std()
@@ -582,7 +663,7 @@ def process_wip_age_data(issue_data, since='', until=''):
 
     """
     if issue_data.empty:
-        logger.warning('Warning: Data for wip age analysis is empty')
+        logger.warning('Data for wip age analysis is empty')
         return
 
     age_data = issue_data[issue_data['in_progress_day'].notnull()]
@@ -665,12 +746,14 @@ def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10
 
     """
     if throughput_data.empty:
-        logger.warning('Warning: Data for Montecarlo analysis is empty')
+        logger.warning('Data for Montecarlo analysis is empty')
         return
 
     SIMULATION_ITEMS = items
     SIMULATIONS = simulations
     LAST_DAYS = window
+
+    logger.info('Running Montecarlo analysis...')
 
     def simulate_days(data, scope):
         days = 0
@@ -683,7 +766,7 @@ def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10
     dataset = throughput_data[['Throughput']].tail(LAST_DAYS).reset_index(drop=True)
     count = len(dataset)
     if count < window:
-        logger.warning(f'Warning: Montecarlo window ({window}) is larger than throughput dataset ({count}). '
+        logger.warning(f'Montecarlo window ({window}) is larger than throughput dataset ({count}). '
                        f'Try increasing your date filter to include more observations or decreasing the forecast window size.')
 
     samples = []
@@ -691,6 +774,7 @@ def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10
         if (i+1) % 1000 == 0:
             logger.info(f'-> {i+1} simulations run')
         samples.append(simulate_days(dataset, SIMULATION_ITEMS))
+    logger.info('---')
     samples = pandas.DataFrame(samples, columns=['Days'])
     distribution_how_long = samples.groupby(['Days']).size().reset_index(name='Frequency')
     distribution_how_long = distribution_how_long.sort_index(ascending=False)
@@ -705,17 +789,19 @@ def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=100
 
     """
     if throughput_data.empty:
-        logger.warning('Warning: Data for Montecarlo analysis is empty')
+        logger.warning('Data for Montecarlo analysis is empty')
         return
 
     SIMULATION_DAYS = days
     SIMULATIONS = simulations
     LAST_DAYS = window
 
+    logger.info('Running Montecarlo analysis...')
+
     dataset = throughput_data[['Throughput']].tail(LAST_DAYS).reset_index(drop=True)
     count = len(dataset)
     if count < window:
-        logger.warning(f'Warning: Montecarlo window ({window}) is larger than throughput dataset ({count}). '
+        logger.warning(f'Montecarlo window ({window}) is larger than throughput dataset ({count}). '
                        f'Try increasing your date filter to include more observations or decreasing the forecast window size.')
 
     samples = []
@@ -723,6 +809,7 @@ def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=100
         if (i+1) % 1000 == 0:
             logger.info(f'-> {i+1} simulations run')
         samples.append(dataset.sample(n=SIMULATION_DAYS, replace=True).sum()['Throughput'])
+    logger.info('---')
     samples = pandas.DataFrame(samples, columns=['Items'])
     distribution_how = samples.groupby(['Items']).size().reset_index(name='Frequency')
     distribution_how = distribution_how.sort_index(ascending=False)
@@ -737,15 +824,17 @@ def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=
 
     """
     if throughput_data.empty:
-        logger.warning('Warning: Data for Montecarlo analysis is empty')
+        logger.warning('Data for Montecarlo analysis is empty')
         return
 
     SIMULATION_ITEMS = points
     SIMULATIONS = simulations
     LAST_DAYS = window
 
+    logger.info('Running Montecarlo analysis...')
+
     if (throughput_data['Velocity']/throughput_data['Throughput']).max() == 1:
-        logger.warning('Warning: All velocity data is equal. Did you load data with points fields?')
+        logger.warning('All velocity data is equal. Did you load data with points fields?')
 
     def simulate_days(data, scope):
         days = 0
@@ -759,7 +848,7 @@ def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=
 
     count = len(dataset)
     if count < window:
-        logger.warning(f'Warning: Montecarlo window ({window}) is larger than velocity dataset ({count}). '
+        logger.warning(f'Montecarlo window ({window}) is larger than velocity dataset ({count}). '
                        f'Try increasing your date filter to include more observations or decreasing the forecast window size.')
 
     samples = []
@@ -767,6 +856,7 @@ def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=
         if (i+1) % 1000 == 0:
             logger.info(f'-> {i+1} simulations run')
         samples.append(simulate_days(dataset, SIMULATION_ITEMS))
+    logger.info('---')
     samples = pandas.DataFrame(samples, columns=['Days'])
     distribution_how_long = samples.groupby(['Days']).size().reset_index(name='Frequency')
     distribution_how_long = distribution_how_long.sort_index(ascending=False)
@@ -781,20 +871,22 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
 
     """
     if throughput_data.empty:
-        logger.warning('Warning: Data for Montecarlo analysis is empty')
+        logger.warning('Data for Montecarlo analysis is empty')
         return
 
     SIMULATION_DAYS = days
     SIMULATIONS = simulations
     LAST_DAYS = window
 
+    logger.info('Running Montecarlo analysis...')
+
     if (throughput_data['Velocity']/throughput_data['Throughput']).max() == 1:
-        logger.warning('Warning: All velocity data is equal. Did you load data with points fields?')
+        logger.warning('All velocity data is equal. Did you load data with points fields?')
 
     dataset = throughput_data[['Velocity']].tail(LAST_DAYS).reset_index(drop=True)
     count = len(dataset)
     if count < window:
-        logger.warning(f'Warning: Montecarlo window ({window}) is larger than velocity dataset ({count}). '
+        logger.warning(f'Montecarlo window ({window}) is larger than velocity dataset ({count}). '
                        f'Try increasing your date filter to include more observations or decreasing the forecast window size.')
 
     samples = []
@@ -802,6 +894,7 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
         if (i+1) % 1000 == 0:
             logger.info(f'-> {i+1} simulations run')
         samples.append(dataset.sample(n=SIMULATION_DAYS, replace=True).sum()['Velocity'])
+    logger.info('---')
     samples = pandas.DataFrame(samples, columns=['Points'])
     distribution_how = samples.groupby(['Points']).size().reset_index(name='Frequency')
     distribution_how = distribution_how.sort_index(ascending=False)
@@ -810,8 +903,29 @@ def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10
     return distribution_how, samples
 
 
+def output_formatted_data(output, title, data, output_exclude_title=False, output_header='', output_footer='', output_columns=None, output_format=None):
+    """
+    format the output of a data frame with a header, footer, and formatting options
+
+    """
+    if output_format is None:
+        output_format = 'string'
+
+    output.writelines(f'{line}\n' for line in [
+        output_header if output_header else '',
+        f'# {title}' if title and not output_exclude_title else '',
+        data.to_string(columns=output_columns) if output_format == 'string' else
+        data.to_csv(columns=output_columns) if output_format == 'csv' else
+        data.to_html(columns=output_columns) if output_format == 'html' else '',
+        output_footer if output_footer else '',
+    ] if line)
+
+
 def cmd_summary(output, issue_data, since='', until=''):
     """ process summary command """
+    # current lead time
+    lt = process_lead_data(issue_data, since=since, until=until)
+
     # current cycle time
     c = process_cycle_data(issue_data, since=since, until=until)
 
@@ -821,6 +935,13 @@ def cmd_summary(output, issue_data, since='', until=''):
     # current wip
     w, ww = process_wip_data(issue_data, since=since, until=until)
     a = process_wip_age_data(issue_data, since=since, until=until)
+
+    lead_time = pandas.DataFrame.from_records([
+        ('Average', lt['Average'].iat[-1]),
+        ('Standard Deviation', lt['Standard Deviation'].iat[-1]),
+        ('Moving Average (10 items)', lt['Moving Average (10 items)'].iat[-1]),
+        ('Moving Standard Deviation (10 items)', lt['Moving Standard Deviation (10 items)'].iat[-1]),
+    ], columns=('Metric', 'Value'), index='Metric')
 
     cycle_time = pandas.DataFrame.from_records([
         ('Average', c['Average'].iat[-1]),
@@ -865,26 +986,13 @@ def cmd_summary(output, issue_data, since='', until=''):
         ('95th Percentile', a['P95'].iat[-1]),
     ], columns=('Metric', 'Value'), index='Metric')
 
-    output.writelines(f'{line}\n' for line in [
-        '# Cycle Time:',
-        cycle_time.to_string(),
-        '---',
-        '# Throughput (Daily):',
-        throughput.to_string(),
-        '---',
-        '# Throughput (Weekly):',
-        throughput_weekly.to_string(),
-        '---',
-        '# Work In Progess (Daily):',
-        wip.to_string(),
-        '---',
-        '# Work In Progess (Weekly):',
-        wip_weekly.to_string(),
-        '---',
-        f'# Work In Progess Age (ending {until}):',
-        wip_age.to_string(),
-        '---',
-    ])
+    output_formatted_data(output, 'Lead Time', lead_time)
+    output_formatted_data(output, 'Cycle Time', cycle_time)
+    output_formatted_data(output, 'Throughput (Daily)', throughput)
+    output_formatted_data(output, 'Throughput (Weekly)', throughput_weekly)
+    output_formatted_data(output, 'Work In Progress (Weekly)', wip)
+    output_formatted_data(output, 'Work In Progress (Weekly)', wip_weekly)
+    output_formatted_data(output, f'Work In Progress Age (ending {until})', wip_age)
 
 
 def cmd_correlation(output, issue_data, since='', until=''):
@@ -921,87 +1029,59 @@ def cmd_correlation(output, issue_data, since='', until=''):
         ('Significance (p <= 0.05)', 'significant' if lead_result['p-val'].iat[0] <= 0.05 else 'not significant'),
     ], columns=('Metric', 'Value'), index='Metric')
 
-    output.writelines('%s\n' % line for line in [
-        '# Points:',
-        point_summary.to_string(),
-        '---',
-        '# Point Correlation to Cycle Time:',
-        cycle_correlation_summary.to_string(),
-        '---',
-        '# Point Correlation to Lead Time:',
-        lead_correlation_summary.to_string(),
-        '---',
-    ])
+    output_formatted_data(output, 'Points', point_summary)
+    output_formatted_data(output, 'Points', point_summary)
+    output_formatted_data(output, 'Point Correlation to Cycle Time', cycle_correlation_summary)
+    output_formatted_data(output, 'Point Correlation to Lead Time', lead_correlation_summary)
 
 
-def cmd_flow(output, data, since='', until='', status_columns=None):
+def cmd_detail_flow(output, data, since='', until=''):
     """ process flow command """
-    f = process_flow_data(data, since=since, until=until, status_columns=status_columns)
-    output.writelines('%s\n' % line for line in [
-        '# Cumulative Flow:',
-        f.to_string(),
-        '---',
-    ])
+    flow_data = process_flow_data(data, since=since, until=until)
+    output_formatted_data(output, 'Cumulative Flow', flow_data)
 
 
-def cmd_wip(output, issue_data, wip_type='', since='', until=''):
+def cmd_detail_wip(output, issue_data, wip_type='', since='', until=''):
     """ process wip command """
     # current wip
     w, ww = process_wip_data(issue_data, since=since, until=until)
     a = process_wip_age_data(issue_data, since=since, until=until)
 
     if wip_type == 'daily':
-        output.writelines('%s\n' % line for line in [
-            '# Work In Progress (Daily):',
-            w.to_string(),
-            '---',
-        ])
+        output_formatted_data(output, 'Work In Progress (Daily)', w)
 
     if wip_type == 'weekly':
-        output.writelines('%s\n' % line for line in [
-            '# Work In Progress (Weekly):',
-            ww.to_string(),
-            '---',
-        ])
+        output_formatted_data(output, 'Work In Progress (Weekly)', ww)
 
     if wip_type == 'aging':
-        output.writelines('%s\n' % line for line in [
-            '# Work In Progess Age:',
-            a[['First In Progress', 'Stage', 'Age in Stage', 'Age']].to_string(),
-            '---',
-        ])
+        wa = a[['First In Progress', 'Age', 'Stage', 'Age in Stage']]
+        output_formatted_data(output, 'Work In Progress Age', wa)
 
 
-def cmd_throughput(output, issue_data, since='', until='', throughput_type=''):
+def cmd_detail_throughput(output, issue_data, since='', until='', throughput_type=''):
     """ process throughput command """
     # current throughput
     t, tw = process_throughput_data(issue_data, since=since, until=until)
 
     if throughput_type == 'daily':
-        output.writelines('%s\n' % line for line in [
-            '# Throughput (Daily):',
-            t.to_string(),
-            '---',
-        ])
+        output_formatted_data(output, 'Throughput (Daily)', t)
 
     if throughput_type == 'weekly':
-        output.writelines('%s\n' % line for line in [
-            '# Throughput (Weekly):',
-            tw.to_string(),
-            '---',
-        ])
+        output_formatted_data(output, 'Throughput (Weekly)', tw)
 
 
-def cmd_cycletime(output, issue_data, since='', until=''):
+def cmd_detail_leadtime(output, issue_data, since='', until=''):
+    """ process lead time command """
+    # current lead time
+    c = process_lead_data(issue_data, since=since, until=until)
+    output_formatted_data(output, 'Lead Time', c)
+
+
+def cmd_detail_cycletime(output, issue_data, since='', until=''):
     """ process cycletime command """
     # current cycle time
     c = process_cycle_data(issue_data, since=since, until=until)
-
-    output.writelines('%s\n' % line for line in [
-        '# Cycle Time:',
-        c.to_string(),
-        '---',
-    ])
+    output_formatted_data(output, 'Cycle Time', c)
 
 
 def cmd_survival_km(output, issue_data, since='', until=''):
@@ -1012,9 +1092,7 @@ def cmd_survival_km(output, issue_data, since='', until=''):
         (f'{int((q)*100)}%', m.percentile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Days'), index='Probability')
 
-    output.write('# Kaplan-Meier Estimation: How likely will a single work item be closed within n days?:\n')
-    output.write(km_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, 'Kaplan-Meier Estimation: Within how many days can a single work item be completed?', km_summary)
 
 
 def cmd_survival_wb(output, issue_data, since='', until=''):
@@ -1025,9 +1103,7 @@ def cmd_survival_wb(output, issue_data, since='', until=''):
         (f'{int((q)*100)}%', m.percentile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Days'), index='Probability')
 
-    output.write('# Weibull Estimation: How likely will a single work item be closed within n days?:\n')
-    output.write(wb_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, 'Weibull Estimation: Within how many days can a single work item be completed?', wb_summary)
 
 
 def cmd_forecast_items_n(output, issue_data, since='', until='', n=10, simulations=10000, window=90):
@@ -1036,15 +1112,13 @@ def cmd_forecast_items_n(output, issue_data, since='', until='', n=10, simulatio
     t, tw = process_throughput_data(issue_data, since=since, until=until)
 
     # analysis
-    output.write(f'# Montecarlo Forecast: How long to complete {n} items?:\n')
     ml, s = forecast_montecarlo_how_long_items(t, items=n, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
         (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Days'), index='Probability')
 
-    output.write(forecast_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, f'Montecarlo Forecast: Within how many days can {n} work items be completed?', forecast_summary)
 
 
 def cmd_forecast_items_days(output, issue_data, since='', until='', days=10, simulations=10000, window=90):
@@ -1053,15 +1127,13 @@ def cmd_forecast_items_days(output, issue_data, since='', until='', days=10, sim
     t, tw = process_throughput_data(issue_data, since=since, until=until)
 
     # analysis
-    output.write(f'# Montecarlo Forecast: How many items can be completed in {days} days?\n')
     mh, s = forecast_montecarlo_how_many_items(t, days=days, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
         (f'{int(q*100)}%', s.Items.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Items'), index='Probability')
 
-    output.write(forecast_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, f'Montecarlo Forecast: How many work items can be completed within {days} days?', forecast_summary)
 
 
 def cmd_forecast_points_n(output, issue_data, since='', until='', n=10, simulations=10000, window=90):
@@ -1070,15 +1142,13 @@ def cmd_forecast_points_n(output, issue_data, since='', until='', n=10, simulati
     t, tw = process_throughput_data(issue_data, since=since, until=until)
 
     # analysis
-    output.write(f'# Montecarlo Forecast: How long to complete {n} points?:\n')
     ml, s = forecast_montecarlo_how_long_points(t, points=n, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
         (f'{int(q*100)}%', s.Days.quantile(q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'Days'), index='Probability')
 
-    output.write(forecast_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, f'Montecarlo Forecast: Within how many days can {n} points be completed?', forecast_summary)
 
 
 def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, simulations=10000, window=90):
@@ -1087,15 +1157,13 @@ def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, si
     t, tw = process_throughput_data(issue_data, since=since, until=until)
 
     # analysis
-    output.write(f'# Montecarlo Forecast: How many points can be completed in {days} days?\n')
     mh, s = forecast_montecarlo_how_many_points(t, days=days, simulations=simulations, window=window)
 
     forecast_summary = pandas.DataFrame.from_records([
         (f'{int(q*100)}%', s.Points.quantile(1-q)) for q in (0.25, 0.5, 0.75, 0.85, 0.95, 0.999)
     ], columns=('Probability', 'points'), index='Probability')
 
-    output.write(forecast_summary.to_string())
-    output.write('\n---\n')
+    output_formatted_data(output, f'Montecarlo Forecast: How many points can be completed within {days} days?', forecast_summary)
 
 
 def cmd_shell(output, issue_data, since='', until='', args=None):
@@ -1112,7 +1180,7 @@ def run(args):
     """
     data, dupes, filtered = read_data(args.file, exclude_types=args.exclude_type, since=args.since, until=args.until)
     if data.empty:
-        logger.warning('Warning: Data for analysis is empty')
+        logger.warning('Data for analysis is empty')
         return
 
     exclude_weekends = args.exclude_weekends
@@ -1136,16 +1204,19 @@ def run(args):
 
     # detail
     if args.command == 'detail' and args.detail_type == 'flow':
-        cmd_flow(output, data, since=since, until=until, status_columns=args.status)
+        cmd_detail_flow(output, data, since=since, until=until)
 
     if args.command == 'detail' and args.detail_type == 'wip':
-        cmd_wip(output, i, since=since, until=until, wip_type=args.type)
+        cmd_detail_wip(output, i, since=since, until=until, wip_type=args.type)
 
     if args.command == 'detail' and args.detail_type == 'throughput':
-        cmd_throughput(output, i, since=since, until=until, throughput_type=args.type)
+        cmd_detail_throughput(output, i, since=since, until=until, throughput_type=args.type)
 
     if args.command == 'detail' and args.detail_type == 'cycletime':
-        cmd_cycletime(output, i, since=since, until=until)
+        cmd_detail_cycletime(output, i, since=since, until=until)
+
+    if args.command == 'detail' and args.detail_type == 'leadtime':
+        cmd_detail_leadtime(output, i, since=since, until=until)
 
     # correlation
     if args.command == 'correlation':
@@ -1181,6 +1252,8 @@ def main():
     parse the command line arguments and run the utility
 
     """
+    global output_formatted_data
+
     parser = argparse.ArgumentParser(description='Analyze changelog data')
     parser.add_argument('-f', '--file', type=argparse.FileType('r'), default='-', help='Data file to analyze (default: stdin)')
     parser.add_argument('-o', '--output', type=argparse.FileType('w'), default='-', help='File to output results (default: stdout)')
@@ -1193,47 +1266,77 @@ def main():
 
     subparsers = parser.add_subparsers(dest='command')
 
-    subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')  # NOQA
+    def add_output_params(subparser):
+        subparser.add_argument('--column', dest='output_columns', action='append', help='Filter output to only include this (can accept more than one for ordering')
+        subparser.add_argument('--format', dest='output_format', choices=('string', 'csv', 'html'), default='string',
+            help='Which output format should be used (string, csv, html)') # NOQA
+        subparser.add_argument('--header', dest='output_header', help='Prepend each data table with header text')
+        subparser.add_argument('--footer', dest='output_footer', default=' ', help='Append each data table with footer text (default: \\n')
+        subparser.add_argument('--exclude-title', dest='output_exclude_title', action='store_true', help='Exclude title of data table in output')
 
+    # summary
+    subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')  # NOQA
+    add_output_params(subparser_summary)
+
+    # detail
     subparser_detail = subparsers.add_parser('detail', help='Output detailed analysis data')
     subparser_detail_subparsers = subparser_detail.add_subparsers(dest='detail_type')
 
-    subparser_flow = subparser_detail_subparsers.add_parser('flow', help='Analyze flow and cumulative flow and output detail')
-    subparser_flow.add_argument('-s', '--status', action='append', help='Filter output to include this status (can accept more than one for ordering')
+    subparser_flow = subparser_detail_subparsers.add_parser('flow', help='Analyze cumulative flow and output detail')
+    add_output_params(subparser_flow)
 
     subparser_wip = subparser_detail_subparsers.add_parser('wip', help='Analyze wip and output detail')
     subparser_wip.add_argument('type', choices=('daily', 'weekly', 'aging'), help='Type of wip data to output (daily, weekly, aging)')
+    add_output_params(subparser_wip)
 
     subparser_throughput = subparser_detail_subparsers.add_parser('throughput', help='Analyze throughput and output detail')
     subparser_throughput.add_argument('type', choices=('daily', 'weekly'), help='Type of throughput data to output (daily, weekly)')
+    add_output_params(subparser_throughput)
 
     subparser_cycletime = subparser_detail_subparsers.add_parser('cycletime', help='Analyze cycletime and output detail')  # NOQA
+    add_output_params(subparser_cycletime)
 
+    subparser_leadtime = subparser_detail_subparsers.add_parser('leadtime', help='Analyze leadtime and output detail')  # NOQA
+    add_output_params(subparser_leadtime)
+
+    # correlation
     subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')  # NOQA
+    add_output_params(subparser_corrrelation)
 
+    # survival
     subparser_survival = subparsers.add_parser('survival', help='Analyze the survival of work items')
     subparser_survival_subparsers = subparser_survival.add_subparsers(dest='survival_type')
-    subparser_survival_km = subparser_survival_subparsers.add_parser('km', help='Analyze the survival of work items using Kaplan-Meier Estimation') # NOQA
-    subparser_survival_wb = subparser_survival_subparsers.add_parser('wb', help='Analyze the survival of work items using Weibull Estimation') # NOQA
 
+    subparser_survival_km = subparser_survival_subparsers.add_parser('km', help='Analyze the survival of work items using Kaplan-Meier Estimation')  # NOQA
+    add_output_params(subparser_survival_km)
+
+    subparser_survival_wb = subparser_survival_subparsers.add_parser('wb', help='Analyze the survival of work items using Weibull Estimation')  # NOQA
+    add_output_params(subparser_survival_wb)
+
+    # forecast
     subparser_forecast = subparsers.add_parser('forecast', help='Forecast the future using Montecarlo simulation')
     subparser_forecast_subparsers = subparser_forecast.add_subparsers(dest='forecast_type')
 
     subparser_forecast_items = subparser_forecast_subparsers.add_parser('items', help='Forecast future work items')
     subparser_forecast_items_group = subparser_forecast_items.add_mutually_exclusive_group(required=True)
-    subparser_forecast_items_group.add_argument('-n', '--items',  dest='n', type=int, help='Number of items to predict answering the question "how many days to complete N items?"')
-    subparser_forecast_items_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many items can be completed in N days?"')
+    subparser_forecast_items_group.add_argument('-n', '--items',  dest='n', type=int,
+        help='Number of items to predict answering the question "within how many days can N items be completed?"')  # NOQA
+    subparser_forecast_items_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many items can be completed within N days?"')
     subparser_forecast_items.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_items.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
+    add_output_params(subparser_forecast_items)
 
     subparser_forecast_points = subparser_forecast_subparsers.add_parser('points', help='Forecast future points')
     subparser_forecast_points_group = subparser_forecast_points.add_mutually_exclusive_group(required=True)
     subparser_forecast_points_group.add_argument('-n', '--points', dest='n', type=int,
-                                                 help='Number of points to predict answering the question "how many days to complete N points?"')
-    subparser_forecast_points_group.add_argument('-d', '--days', type=int, help='Number of days to predict answering the question "how many points can be completed in N days?"')
+        help='Number of points to predict answering the question "within how many days can N points be completed?"')  # NOQA
+    subparser_forecast_points_group.add_argument('-d', '--days', type=int,
+        help='Number of days to predict answering the question "how many points can be completed within N days?"')  # NOQA
     subparser_forecast_points.add_argument('--simulations', default=10000, help='Number of simulation iterations to run (default: 10000)')
     subparser_forecast_points.add_argument('--window', default=90, help='Window of historical data to use in the forecast (default: 90 days)')
+    add_output_params(subparser_forecast_points)
 
+    # shell
     subparser_shell = subparsers.add_parser('shell', help='Load the data into an interactive Python shell')  # NOQA
 
     args = parser.parse_args()
@@ -1260,8 +1363,14 @@ def main():
         subparser_forecast.print_help()
         return
 
+    # prepare output formatting
     if args.output:
         args.output.reconfigure(line_buffering=True)
+
+    format_args = ['output_exclude_title', 'output_header', 'output_footer', 'output_format', 'output_columns']
+    if any(hasattr(args, arg) for arg in format_args):
+        kw = {key: getattr(args, key) for key in format_args if hasattr(args, key)}
+        output_formatted_data = functools.partial(output_formatted_data, **kw)
 
     try:
         init()
