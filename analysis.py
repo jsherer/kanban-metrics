@@ -379,6 +379,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
                     issue_statuses[issue_id]['last_complete'] = update.status_change_date
                 issue_statuses[issue_id]['last_complete'] = max(issue_statuses[issue_id]['last_complete'], update.status_change_date)
 
+            issue_statuses[issue_id]['prev_update'] = issue_statuses.get(issue_id, {}).get('last_update', {})
             issue_statuses[issue_id]['last_update'] = update
 
     # Finally, we create a new data set of each issue with the dates when the state changes happened. We also compute the lead and cycle times of each issue.
@@ -466,6 +467,11 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
 
     # round cycle time less than 1 hour to zero
     issue_data.loc[issue_data['cycle_time_days'] < 1/24.0, 'cycle_time_days'] = 0
+
+    # add column for the last statuses of this issue
+    issue_data['prev_issue_status'] = [issue_statuses[issue_ids[key]].get('prev_update', {}).get('status_to_name') for key in issue_data['issue_key']]
+    issue_data['prev_issue_status_change_date'] = [issue_statuses[issue_ids[key]].get('prev_update', {}).get('status_change_date') for key in issue_data['issue_key']]
+    issue_data['prev_issue_status_category'] = [issue_statuses[issue_ids[key]].get('prev_update', {}).get('status_to_category_name') for key in issue_data['issue_key']]
 
     # add column for the last statuses of this issue
     issue_data['last_issue_status'] = [issue_statuses[issue_ids[key]].get('last_update', {}).get('status_to_name') for key in issue_data['issue_key']]
@@ -692,6 +698,10 @@ def process_wip_age_data(issue_data, since='', until=''):
     age_data['P85'] = age_data['Age'].quantile(0.85)
     age_data['P95'] = age_data['Age'].quantile(0.95)
     age_data['P99'] = age_data['Age'].quantile(0.999)
+
+    # fix negative age in stages (because of an until that is set before completion date)
+    age_data.loc[age_data['Age in Stage'] < 0, 'Stage'] = 'Unknown'
+    age_data.loc[age_data['Age in Stage'] < 0, 'Age in Stage'] = age_data.loc[age_data['Age in Stage'] < 0, 'Age']
 
     return age_data
 
@@ -990,7 +1000,7 @@ def cmd_summary(output, issue_data, since='', until=''):
     output_formatted_data(output, 'Cycle Time', cycle_time)
     output_formatted_data(output, 'Throughput (Daily)', throughput)
     output_formatted_data(output, 'Throughput (Weekly)', throughput_weekly)
-    output_formatted_data(output, 'Work In Progress (Weekly)', wip)
+    output_formatted_data(output, 'Work In Progress (Daily)', wip)
     output_formatted_data(output, 'Work In Progress (Weekly)', wip_weekly)
     output_formatted_data(output, f'Work In Progress Age (ending {until})', wip_age)
 
@@ -1055,7 +1065,7 @@ def cmd_detail_wip(output, issue_data, wip_type='', since='', until=''):
 
     if wip_type == 'aging':
         wa = a[['First In Progress', 'Age', 'Stage', 'Age in Stage']]
-        output_formatted_data(output, 'Work In Progress Age', wa)
+        output_formatted_data(output, f'Work In Progress Age (ending {until})', wa)
 
 
 def cmd_detail_throughput(output, issue_data, since='', until='', throughput_type=''):
