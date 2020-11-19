@@ -714,6 +714,14 @@ def process_correlation(x, y):
     return pingouin.corr(x, y, method='pearson')
 
 
+def plot_correlation(x, y, ax=None):
+    """
+    plot a pearson regression between two sets (usually issue_points and cycle_time_days)
+
+    """
+    return seaborn.regplot(x, y, color="xkcd:muted blue", ax=ax)
+
+
 def analyze_survival_km(issue_data, since='', until=''):
     """
     run a kaplan-meier survivability analysis on the issue data
@@ -752,7 +760,7 @@ def analyze_survival_wb(issue_data, since='', until=''):
 
 def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10000, window=90):
     """
-    forecast number of days it will take to complete n number of items
+    forecast number of days it will take to complete n number of items based on historical throughput
 
     """
     if throughput_data.empty:
@@ -795,7 +803,7 @@ def forecast_montecarlo_how_long_items(throughput_data, items=10, simulations=10
 
 def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=10000, window=90):
     """
-    forecast number of items to be completed in n days
+    forecast number of items to be completed in n days based on historical throughput
 
     """
     if throughput_data.empty:
@@ -830,7 +838,7 @@ def forecast_montecarlo_how_many_items(throughput_data, days=10, simulations=100
 
 def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=10000, window=90):
     """
-    forecast number of days it will take to complete n number of points
+    forecast number of days it will take to complete n number of points based on historical velocity
 
     """
     if throughput_data.empty:
@@ -877,7 +885,7 @@ def forecast_montecarlo_how_long_points(throughput_data, points=10, simulations=
 
 def forecast_montecarlo_how_many_points(throughput_data, days=10, simulations=10000, window=90):
     """
-    forecast number of points to be completed in n days
+    forecast number of points to be completed in n days based on historical velocity
 
     """
     if throughput_data.empty:
@@ -1005,7 +1013,7 @@ def cmd_summary(output, issue_data, since='', until=''):
     output_formatted_data(output, f'Work In Progress Age (ending {until})', wip_age)
 
 
-def cmd_correlation(output, issue_data, since='', until=''):
+def cmd_correlation(output, issue_data, since='', until='', plot=None):
     """ process correlation command """
     points = issue_data['issue_points'].values.astype(float)
     lead_time = issue_data['lead_time_days'].values.astype(float)
@@ -1043,6 +1051,35 @@ def cmd_correlation(output, issue_data, since='', until=''):
     output_formatted_data(output, 'Points', point_summary)
     output_formatted_data(output, 'Point Correlation to Cycle Time', cycle_correlation_summary)
     output_formatted_data(output, 'Point Correlation to Lead Time', lead_correlation_summary)
+
+    if plot:
+        fig, (ax1, ax2) = matplotlib.pyplot.subplots(1, 2, dpi=150, figsize=(15, 10))
+
+        # cycle time
+        ax = plot_correlation(points, cycle_time, ax=ax1)
+        ax.set_title('Point Correlation to Cycle Time', y=1.02, loc='left',
+                     fontdict={'size': 18, 'weight': 'semibold'})
+        subtitle = '{} (r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if cycle_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
+                                                             cycle_result['r'].iat[0],
+                                                             cycle_result['p-val'].iat[0])
+        ax.text(x=0, y=1, s=subtitle, fontsize=14, ha='left', va='center', transform=ax.transAxes)
+        ax.set_ylabel('Cycle Time (days)')
+        ax.set_xlabel('Issue Points')
+        ax.set_xlim((1, issue_data['issue_points'].max()+0.1))
+
+        # lead time
+        ax = plot_correlation(points, lead_time, ax=ax2)
+        ax.set_title('Point Correlation to Lead Time', y=1.02, loc='left',
+                     fontdict={'size': 18, 'weight': 'semibold'})
+        subtitle = '{} (r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if lead_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
+                                                             lead_result['r'].iat[0],
+                                                             lead_result['p-val'].iat[0])
+        ax.text(x=0, y=1, s=subtitle, fontsize=14, ha='left', va='center', transform=ax.transAxes)
+        ax.set_ylabel('Lead Time (days)')
+        ax.set_xlabel('Issue Points')
+        ax.set_xlim((1, issue_data['issue_points'].max()+0.1))
+
+        fig.savefig(plot)
 
 
 def cmd_detail_flow(output, data, since='', until=''):
@@ -1176,7 +1213,7 @@ def cmd_forecast_points_days(output, issue_data, since='', until='', days=10, si
     output_formatted_data(output, f'Montecarlo Forecast: How many points can be completed within {days} days?', forecast_summary)
 
 
-def cmd_shell(output, issue_data, since='', until='', args=None):
+def cmd_shell(output, data, issue_data, since='', until='', args=None):
     logger.info('Creating interactive Python shell...')
     logger.info('-> locals: %s' % ', '.join(locals().keys()))
     logger.info('---')
@@ -1230,7 +1267,7 @@ def run(args):
 
     # correlation
     if args.command == 'correlation':
-        cmd_correlation(output, i, since=since, until=until)
+        cmd_correlation(output, i, since=since, until=until, plot=args.output_plot)
 
     # survival
     if args.command == 'survival' and args.survival_type == 'km':
@@ -1254,7 +1291,7 @@ def run(args):
 
     # shell
     if args.command == 'shell':
-        cmd_shell(output, i, since=since, until=until, args=args)
+        cmd_shell(output, data, i, since=since, until=until, args=args)
 
 
 def main():
@@ -1284,6 +1321,9 @@ def main():
         subparser.add_argument('--footer', dest='output_footer', default=' ', help='Append each data table with footer text (default: \\n')
         subparser.add_argument('--exclude-title', dest='output_exclude_title', action='store_true', help='Exclude title of data table in output')
 
+    def add_output_plot_params(subparser):
+        subparser.add_argument('--plot', dest='output_plot', type=argparse.FileType('wb'), default=None, help='File to output plot results.')
+
     # summary
     subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')  # NOQA
     add_output_params(subparser_summary)
@@ -1312,6 +1352,7 @@ def main():
     # correlation
     subparser_corrrelation = subparsers.add_parser('correlation', help='Test correlation between issue_points and lead/cycle times')  # NOQA
     add_output_params(subparser_corrrelation)
+    add_output_plot_params(subparser_corrrelation)
 
     # survival
     subparser_survival = subparsers.add_parser('survival', help='Analyze the survival of work items')
