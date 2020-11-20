@@ -363,6 +363,10 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
     # * In Progress
     # * Done
 
+    # map categories to a set of statuses that roll up to it
+    categories = collections.defaultdict(set)
+
+    # issue ids to status information
     issue_statuses = collections.defaultdict(dict)
 
     for issue_id, issue in issues.items():
@@ -370,6 +374,12 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
             # skip changelogs that are none or nan
             if update.changelog_id is None or numpy.isnan(update.changelog_id):
                 continue
+
+            # learn about statuses
+            if update.status_to_name:
+                categories[update.status_to_category_name].add(update.status_to_name)
+            if update.status_from_name:
+                categories[update.status_from_category_name].add(update.status_from_name)
 
             # learn when the issue was first created
             if not issue_statuses[issue_id].get('first_created'):
@@ -491,6 +501,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
     issue_data = issue_data.set_index('issue_key')
 
     extra = (
+        categories,
         issues,
         issue_ids,
         issue_keys,
