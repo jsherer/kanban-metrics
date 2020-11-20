@@ -203,40 +203,42 @@ def process_flow_data(data, since='', until=''):
     return f
 
 
-def plot_flow(flow_data, status_columns=None, ax=None):
+def plot_flow(flow_data, status_columns=None, plot_normalize=False, ax=None):
     """ plot a cumlative flow diagram of the flow data """
     if status_columns is None:
         status_columns = flow_data.columns
-        
-    flow_columns = list(reversed(status_columns))
 
-    first_col = flow_columns[0]
+    flow_columns = list(reversed(status_columns))
     last_col = flow_columns[-1]
-        
+
     flow = flow_data[flow_columns]
     flow.index = pandas.to_datetime(flow.index)
-    
+
+    if plot_normalize:
+        flow = flow.divide(flow.sum(axis=1), axis=0)
+
     # ymin is the minimum of the last stage
     y_min = flow[last_col].min()
-    
+
     # ymax is the maximum of the sums
-    y_max = flow[flow_columns].max().sum() 
-    
+    y_max = flow[flow_columns].sum(axis=1).max()
+
     # create the individual area counts for each status
     flow_agg = flow.copy()
+
     ys = []
     for col in reversed(flow_columns):
         lasty = ys[-1] if ys else 0
         y = flow_agg[col] = (flow[col] + lasty).astype(float)
         ys.append(y)
-    
+
     # melt the data to be able to be sent to lineplot
     flow_melted = pandas.melt(flow_agg.reset_index(), ['Date'])
     flow_melted['value'] = flow_melted['value'].astype(float)
-    
+
     # plot the lines
     g = seaborn.lineplot(data=flow_melted, x='Date', y='value', hue='variable', palette=list(reversed([f'C{i}' for i in range(len(ys))])), ax=ax)
-    
+
     # fill between the lines
     lasty = 0
     for i, y in enumerate(ys):
@@ -249,13 +251,16 @@ def plot_flow(flow_data, status_columns=None, ax=None):
 
     g.set_xlabel('Timeline')
     g.set_ylabel('Items')
-    
+
     tenth = (y_max-y_min)*0.1
     g.set_ylim([y_min - tenth, y_max + 2*tenth])
-        
+
+    if plot_normalize:
+        g.set_ylim((0, 1))
+
     return g
-    
-    
+
+
 def process_flow_category_data(data, since='', until=''):
     """ process cumulative flow status categories from changelog data """
 
@@ -1086,16 +1091,16 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
         fig.savefig(plot)
 
 
-def cmd_detail_flow(output, data, since='', until='', plot=None):
+def cmd_detail_flow(output, data, since='', until='', plot=None, plot_normalize=False, columns=None):
     """ process flow command """
     flow_data = process_flow_data(data, since=since, until=until)
     output_formatted_data(output, 'Cumulative Flow', flow_data)
-    
+
     if plot:
         fig, ax = matplotlib.pyplot.subplots(1, 1, dpi=150, figsize=(15, 10))
-        ax = plot_flow(flow_data)
+        plot_flow(flow_data, status_columns=columns, plot_normalize=plot_normalize, ax=ax)
         fig.savefig(plot)
-        
+
 
 def cmd_detail_wip(output, issue_data, wip_type='', since='', until=''):
     """ process wip command """
@@ -1260,7 +1265,7 @@ def run(args):
 
     # detail
     if args.command == 'detail' and args.detail_type == 'flow':
-        cmd_detail_flow(output, data, since=since, until=until, plot=args.output_plot)
+        cmd_detail_flow(output, data, since=since, until=until, plot=args.output_plot, plot_normalize=args.output_plot_normalize, columns=args.output_columns)
 
     if args.command == 'detail' and args.detail_type == 'wip':
         cmd_detail_wip(output, i, since=since, until=until, wip_type=args.type)
@@ -1342,6 +1347,7 @@ def main():
     subparser_detail_subparsers = subparser_detail.add_subparsers(dest='detail_type')
 
     subparser_flow = subparser_detail_subparsers.add_parser('flow', help='Analyze cumulative flow and output detail')
+    subparser_flow.add_argument('--plot-normalize', dest='output_plot_normalize', action='store_true', help='Normalize cumulative flow plot to be a relative percent')
     add_output_params(subparser_flow)
     add_output_plot_params(subparser_flow)
 
