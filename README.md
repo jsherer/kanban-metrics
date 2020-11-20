@@ -47,6 +47,7 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/throughput-timeline.png)
 ![](images/throughput-histogram.png)
 ![](images/burndown-timeline.png)
+![](images/flow-category-timeline.png)
 ![](images/flow-timeline.png)
 ![](images/flow-normalized-timeline.png)
 ![](images/wip-timeline.png)

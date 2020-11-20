@@ -1091,9 +1091,12 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
         fig.savefig(plot)
 
 
-def cmd_detail_flow(output, data, since='', until='', plot=None, plot_normalize=False, columns=None):
+def cmd_detail_flow(output, data, since='', until='', categorical=False, plot=None, plot_normalize=False, columns=None):
     """ process flow command """
-    flow_data = process_flow_data(data, since=since, until=until)
+    if categorical:
+        flow_data = process_flow_category_data(data, since=since, until=until)
+    else:
+        flow_data = process_flow_data(data, since=since, until=until)
     output_formatted_data(output, 'Cumulative Flow', flow_data)
 
     if plot:
@@ -1265,7 +1268,9 @@ def run(args):
 
     # detail
     if args.command == 'detail' and args.detail_type == 'flow':
-        cmd_detail_flow(output, data, since=since, until=until, plot=args.output_plot, plot_normalize=args.output_plot_normalize, columns=args.output_columns)
+        cmd_detail_flow(output, data,
+                        since=since, until=until, categorical=args.categorical,
+                        plot=args.output_plot, plot_normalize=args.output_plot_normalize, columns=args.output_columns)
 
     if args.command == 'detail' and args.detail_type == 'wip':
         cmd_detail_wip(output, i, since=since, until=until, wip_type=args.type)
@@ -1347,6 +1352,7 @@ def main():
     subparser_detail_subparsers = subparser_detail.add_subparsers(dest='detail_type')
 
     subparser_flow = subparser_detail_subparsers.add_parser('flow', help='Analyze cumulative flow and output detail')
+    subparser_flow.add_argument('--categorical', action='store_true', help='Use status categories instead of statuses in flow analysis')
     subparser_flow.add_argument('--plot-normalize', dest='output_plot_normalize', action='store_true', help='Normalize cumulative flow plot to be a relative percent')
     add_output_params(subparser_flow)
     add_output_plot_params(subparser_flow)
