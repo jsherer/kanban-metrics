@@ -15,6 +15,7 @@ import logging
 import lifelines
 import matplotlib
 import matplotlib.pyplot
+import matplotlib.ticker
 import numpy
 import pandas
 import pingouin
@@ -203,7 +204,7 @@ def process_flow_data(data, since='', until=''):
     return f
 
 
-def plot_flow(flow_data, status_columns=None, plot_normalize=False, ax=None):
+def plot_flow(flow_data, status_columns=None, ax=None):
     """ plot a cumlative flow diagram of the flow data """
     if status_columns is None:
         status_columns = flow_data.columns
@@ -213,9 +214,6 @@ def plot_flow(flow_data, status_columns=None, plot_normalize=False, ax=None):
 
     flow = flow_data[flow_columns]
     flow.index = pandas.to_datetime(flow.index)
-
-    if plot_normalize:
-        flow = flow.divide(flow.sum(axis=1), axis=0)
 
     # ymin is the minimum of the last stage
     y_min = flow[last_col].min()
@@ -249,14 +247,52 @@ def plot_flow(flow_data, status_columns=None, plot_normalize=False, ax=None):
     g.set_title('Cumulative Flow Since {}'.format(flow_agg.index.min().strftime('%Y-%m-%d')), loc='left', fontdict={
                 'fontsize': 18, 'fontweight': 'normal'})
 
+    g.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(5))
+    ticks_loc = g.get_xticks().tolist()
+    g.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(ticks_loc))
+
     g.set_xlabel('Timeline')
     g.set_ylabel('Items')
 
     tenth = (y_max-y_min)*0.1
     g.set_ylim([y_min - tenth, y_max + 2*tenth])
 
-    if plot_normalize:
-        g.set_ylim((0, 1))
+    return g
+
+
+def plot_flow_trendlines(flow_data, status_columns=None, ax=None):
+    """ plot a cumulative flow diagram in a scatterplot and fit regression lines for slop visualization """
+    if status_columns is None:
+        status_columns = flow_data.columns
+
+    flow_columns = list(reversed(status_columns))
+
+    flow = flow_data[flow_columns]
+    flow.index = pandas.to_datetime(flow.index)
+
+    g = None
+    lasty = 0
+    for i, col in enumerate(reversed(flow_columns)):
+        y = (flow[col] + lasty).astype(float)
+        g = plot_correlation(flow.reset_index().index, y, color=f'C{i}', ax=ax)
+        lasty = y
+
+    if not g:
+        return
+
+    g.set_title('Cumulative Flow Since {}'.format(flow.index.min().strftime('%Y-%m-%d')), loc='left', fontdict={
+                'fontsize': 18, 'fontweight': 'normal'})
+
+    g.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(5))
+    ticks_loc = g.get_xticks().tolist()
+    g.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(ticks_loc))
+    g.set_xticklabels([flow.reset_index().iloc[min(int(x), len(flow)-1)]['Date'].strftime('%Y-%m-%d') for x in g.get_xticks()])
+
+    g.set_ylabel('Items')
+    g.set_xlabel('Timeline')
+    g.set_ylim(ymin=0)
+
+    g.legend(list(reversed(flow_columns)))
 
     return g
 
@@ -1106,7 +1142,7 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
         fig.savefig(plot)
 
 
-def cmd_detail_flow(output, data, since='', until='', categorical=False, plot=None, plot_normalize=False, columns=None):
+def cmd_detail_flow(output, data, since='', until='', categorical=False, plot=None, plot_trendline=False, columns=None):
     """ process flow command """
     if categorical:
         flow_data = process_flow_category_data(data, since=since, until=until)
@@ -1117,23 +1153,11 @@ def cmd_detail_flow(output, data, since='', until='', categorical=False, plot=No
 
     if plot:
         fig, ax = matplotlib.pyplot.subplots(1, 1, dpi=150, figsize=(15, 10))
-        plot_flow(flow_data, status_columns=columns, plot_normalize=plot_normalize, ax=ax)
 
-        # TODO: i might revive this in the future...plotting trendlines of the flow for better comparison.
-        # fig, (ax, ax2) = matplotlib.pyplot.subplots(1, 2, dpi=150, figsize=(15, 10))
-        # prev = None
-        # if not columns:
-        #     columns = flow_data.columns
-        # for i, col in enumerate(columns):
-        #     now = flow_data[col]
-        #     if prev is not None:
-        #         now = now + prev
-        #     plot_correlation(flow_data.reset_index().index, now, color=f'C{i}', ax=ax2)
-        #     prev = now
-        # ax2.set_title('Cumlative Flow Trends')
-        # ax2.set_ylabel('Items')
-        # ax2.set_xlabel('Day')
-        # ax2.set_ylim(ymin=0)
+        if plot_trendline:
+            plot_flow_trendlines(flow_data, status_columns=columns, ax=ax)
+        else:
+            plot_flow(flow_data, status_columns=columns, ax=ax)
 
         fig.savefig(plot)
 
@@ -1303,7 +1327,8 @@ def run(args):
     if args.command == 'detail' and args.detail_type == 'flow':
         cmd_detail_flow(output, data,
                         since=since, until=until, categorical=args.categorical,
-                        plot=args.output_plot, plot_normalize=args.output_plot_normalize, columns=args.output_columns)
+                        plot=args.output_plot, plot_trendline=args.output_plot_trendline,
+                        columns=args.output_columns)
 
     if args.command == 'detail' and args.detail_type == 'wip':
         cmd_detail_wip(output, i, since=since, until=until, wip_type=args.type)
@@ -1374,7 +1399,7 @@ def main():
         subparser.add_argument('--exclude-title', dest='output_exclude_title', action='store_true', help='Exclude title of data table in output')
 
     def add_output_plot_params(subparser):
-        subparser.add_argument('--plot', dest='output_plot', type=argparse.FileType('wb'), default=None, help='File to output plot results.')
+        subparser.add_argument('--plot', dest='output_plot', type=argparse.FileType('wb'), default=None, help='File to output plot results')
 
     # summary
     subparser_summary = subparsers.add_parser('summary', help='Generate a summary of metric data (cycle time, throughput, wip)')  # NOQA
@@ -1386,7 +1411,7 @@ def main():
 
     subparser_flow = subparser_detail_subparsers.add_parser('flow', help='Analyze cumulative flow and output detail')
     subparser_flow.add_argument('--categorical', action='store_true', help='Use status categories instead of statuses in flow analysis')
-    subparser_flow.add_argument('--plot-normalize', dest='output_plot_normalize', action='store_true', help='Normalize cumulative flow plot to be a relative percent')
+    subparser_flow.add_argument('--plot-trendline', dest='output_plot_trendline', action='store_true', help='Output cumulative flow diagram as a scatterplot and trendline')
     add_output_params(subparser_flow)
     add_output_plot_params(subparser_flow)
 

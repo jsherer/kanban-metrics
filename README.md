@@ -49,7 +49,7 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/burndown-timeline.png)
 ![](images/flow-category-timeline.png)
 ![](images/flow-timeline.png)
-![](images/flow-normalized-timeline.png)
+![](images/flow-timeline-trend.png)
 ![](images/wip-timeline.png)
 ![](images/wip-aging.png)
 ![](images/forecast-kaplan-meier.png)
