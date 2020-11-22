@@ -247,7 +247,7 @@ def plot_flow(flow_data, status_columns=None, plot_normalize=False, ax=None):
 
     # label everything
     g.set_title('Cumulative Flow Since {}'.format(flow_agg.index.min().strftime('%Y-%m-%d')), loc='left', fontdict={
-                'fontsize': 18, 'fontweight': 'semibold'})
+                'fontsize': 18, 'fontweight': 'normal'})
 
     g.set_xlabel('Timeline')
     g.set_ylabel('Items')
@@ -1074,14 +1074,17 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
 
     if plot:
         fig, (ax1, ax2) = matplotlib.pyplot.subplots(1, 2, dpi=150, figsize=(15, 10))
+        fig.suptitle(f'Point Correlation from {since} to {until}',
+                     fontproperties={'size': 20, 'weight': 'normal'})
 
         # cycle time
         ax = plot_correlation(points, cycle_time, ax=ax1)
         ax.set_title('Point Correlation to Cycle Time', y=1.02, loc='left',
-                     fontdict={'size': 18, 'weight': 'semibold'})
-        subtitle = '{} (r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if cycle_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
-                                                             cycle_result['r'].iat[0],
-                                                             cycle_result['p-val'].iat[0])
+                     fontdict={'size': 18, 'weight': 'normal'})
+        subtitle = '{} (n: {} r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if cycle_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
+                                                                   cycle_result['n'].iat[0],
+                                                                   cycle_result['r'].iat[0],
+                                                                   cycle_result['p-val'].iat[0])
         ax.text(x=0, y=1, s=subtitle, fontsize=14, ha='left', va='center', transform=ax.transAxes)
         ax.set_ylabel('Cycle Time (days)')
         ax.set_xlabel('Issue Points')
@@ -1090,10 +1093,11 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
         # lead time
         ax = plot_correlation(points, lead_time, ax=ax2)
         ax.set_title('Point Correlation to Lead Time', y=1.02, loc='left',
-                     fontdict={'size': 18, 'weight': 'semibold'})
-        subtitle = '{} (r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if lead_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
-                                                             lead_result['r'].iat[0],
-                                                             lead_result['p-val'].iat[0])
+                     fontdict={'size': 18, 'weight': 'normal'})
+        subtitle = '{} (n: {} r: {:.2f} p: {:.2f} α: 0.05)'.format('Significant' if lead_result['p-val'].iat[0] <= 0.05 else 'Not Significant',
+                                                                   lead_result['n'].iat[0],
+                                                                   lead_result['r'].iat[0],
+                                                                   lead_result['p-val'].iat[0])
         ax.text(x=0, y=1, s=subtitle, fontsize=14, ha='left', va='center', transform=ax.transAxes)
         ax.set_ylabel('Lead Time (days)')
         ax.set_xlabel('Issue Points')
