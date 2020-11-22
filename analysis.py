@@ -734,12 +734,12 @@ def process_correlation(x, y):
     return pingouin.corr(x, y, method='pearson')
 
 
-def plot_correlation(x, y, ax=None):
+def plot_correlation(x, y, color='xkcd:muted blue', ax=None):
     """
     plot a pearson regression between two sets (usually issue_points and cycle_time_days)
 
     """
-    return seaborn.regplot(x, y, color="xkcd:muted blue", ax=ax)
+    return seaborn.regplot(x, y, color=color, ax=ax)
 
 
 def analyze_survival_km(issue_data, since='', until=''):
@@ -1110,13 +1110,31 @@ def cmd_detail_flow(output, data, since='', until='', categorical=False, plot=No
     """ process flow command """
     if categorical:
         flow_data = process_flow_category_data(data, since=since, until=until)
+        output_formatted_data(output, 'Cumulative Flow (Categorical)', flow_data)
     else:
         flow_data = process_flow_data(data, since=since, until=until)
-    output_formatted_data(output, 'Cumulative Flow', flow_data)
+        output_formatted_data(output, 'Cumulative Flow', flow_data)
 
     if plot:
         fig, ax = matplotlib.pyplot.subplots(1, 1, dpi=150, figsize=(15, 10))
         plot_flow(flow_data, status_columns=columns, plot_normalize=plot_normalize, ax=ax)
+
+        # TODO: i might revive this in the future...plotting trendlines of the flow for better comparison.
+        # fig, (ax, ax2) = matplotlib.pyplot.subplots(1, 2, dpi=150, figsize=(15, 10))
+        # prev = None
+        # if not columns:
+        #     columns = flow_data.columns
+        # for i, col in enumerate(columns):
+        #     now = flow_data[col]
+        #     if prev is not None:
+        #         now = now + prev
+        #     plot_correlation(flow_data.reset_index().index, now, color=f'C{i}', ax=ax2)
+        #     prev = now
+        # ax2.set_title('Cumlative Flow Trends')
+        # ax2.set_ylabel('Items')
+        # ax2.set_xlabel('Day')
+        # ax2.set_ylim(ymin=0)
+
         fig.savefig(plot)
 
 
