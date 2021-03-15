@@ -135,7 +135,11 @@ def read_data(path, exclude_types=None, since='', until=''):
 
     if not data.empty:
         min_date = data['issue_created_date'].min().strftime('%Y-%m-%d')
+        if not since:
+            since = min_date
         max_date = data['issue_created_date'].max().strftime('%Y-%m-%d')
+        if not until:
+            until = max_date
         status_min_date = data['status_change_date'].min().strftime('%Y-%m-%d')
         status_max_date = data['status_change_date'].max().strftime('%Y-%m-%d')
         num_issues = data['issue_key'].nunique()
@@ -1310,9 +1314,13 @@ def run(args):
     since = args.since
     if not since:
         since = min(data['issue_created_date'].min(), data['status_change_date'].min())
+    if hasattr(since, 'date'):
+        since = since.date()
     until = args.until
     if not until:
         until = max(data['issue_created_date'].max(), data['status_change_date'].max()) + pandas.Timedelta(1, 'D')
+    if hasattr(until, 'date'):
+        until = until.date()
 
     output = args.output
 
