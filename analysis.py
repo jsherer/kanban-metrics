@@ -11,6 +11,7 @@ import code
 import collections
 import functools
 import logging
+import math
 
 import lifelines
 import matplotlib
@@ -412,7 +413,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
     for issue_id, issue in issues.items():
         for update in issue:
             # skip changelogs that are none or nan
-            if update.changelog_id is None or numpy.isnan(update.changelog_id):
+            if update.changelog_id is None:# or numpy.isnan(update.changelog_id):
                 continue
 
             # learn about statuses
@@ -491,7 +492,7 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
 
         if cycle_time/pandas.to_timedelta(1, unit='D') < 0:
             cycle_time = pandas.Timedelta(days=0)
-
+        
         issue_data = issue_data.append({
             'issue_key': issue_keys.get(issue_id),
             'issue_type': issue_types.get(issue_id),
@@ -507,12 +508,21 @@ def process_issue_data(data, since='', until='', exclude_weekends=False):
             'cycle_time': cycle_time,
             'cycle_time_days': None,
         }, ignore_index=True)
+        
+    # convert issue_points to float
+    issue_data['issue_points'] = issue_data['issue_points'].astype(float)
 
     # truncate days
+    issue_data.loc[issue_data['new'].isnull(), 'new'] = None
+    issue_data['new'] = pandas.to_datetime(issue_data['new'])
     issue_data['new_day'] = issue_data['new'].values.astype('<M8[D]')
 
+    issue_data.loc[issue_data['in_progress'].isnull(), 'in progress'] = None
+    issue_data['in_progress'] = pandas.to_datetime(issue_data['in_progress'])
     issue_data['in_progress_day'] = issue_data['in_progress'].values.astype('<M8[D]')
 
+    issue_data.loc[issue_data['complete'].isnull(), 'complete'] = None
+    issue_data['complete'] = pandas.to_datetime(issue_data['complete'])
     issue_data['complete_day'] = issue_data['complete'].values.astype('<M8[D]')
 
     # add column for lead time represented as days
@@ -771,7 +781,7 @@ def process_correlation(x, y):
     run a pearson correlation analysis between two sets (usually issue_points and cycle_time_days)
 
     """
-    return pingouin.corr(x, y, method='pearson')
+    return pingouin.corr(x=x, y=y, method='pearson')
 
 
 def plot_correlation(x, y, color='xkcd:muted blue', ax=None):
@@ -779,7 +789,7 @@ def plot_correlation(x, y, color='xkcd:muted blue', ax=None):
     plot a pearson regression between two sets (usually issue_points and cycle_time_days)
 
     """
-    return seaborn.regplot(x, y, color=color, ax=ax)
+    return seaborn.regplot(x=x, y=y, color=color, ax=ax)
 
 
 def analyze_survival_km(issue_data, since='', until=''):
@@ -1092,7 +1102,7 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
     cycle_correlation_summary = pandas.DataFrame.from_records([
         ('Observations (n)', cycle_result['n'].iat[0]),
         ('Correlation Coefficient (r)', cycle_result['r'].iat[0]),
-        ('Determination Coefficient (r^2)', cycle_result['r2'].iat[0]),
+        ('Determination Coefficient (r^2)', math.pow(cycle_result['r'].iat[0], 2)),
         ('P-Value (p)', cycle_result['p-val'].iat[0]),
         ('Likelihood of detecting effect (power)', cycle_result['power'].iat[0]),
         ('Significance (p <= 0.05)', 'significant' if cycle_result['p-val'].iat[0] <= 0.05 else 'not significant'),
@@ -1101,7 +1111,7 @@ def cmd_correlation(output, issue_data, since='', until='', plot=None):
     lead_correlation_summary = pandas.DataFrame.from_records([
         ('Observations (n)', lead_result['n'].iat[0]),
         ('Correlation Coefficient (r)', lead_result['r'].iat[0]),
-        ('Determination Coefficient (r^2)', lead_result['r2'].iat[0]),
+        ('Determination Coefficient (r^2)', math.pow(lead_result['r'].iat[0],2)),
         ('P-Value (p)', lead_result['p-val'].iat[0]),
         ('Likelihood of detecting effect (power)', lead_result['power'].iat[0]),
         ('Significance (p <= 0.05)', 'significant' if lead_result['p-val'].iat[0] <= 0.05 else 'not significant'),

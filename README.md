@@ -56,3 +56,5 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
 ![](images/forecast-weibull-survival.png)
 ![](images/forecast-montecarlo-when.png)
 ![](images/forecast-montecarlo-how.png)
+![](images/correlation-cycle-time.png)
+![](images/correlation-lead-time.png)
