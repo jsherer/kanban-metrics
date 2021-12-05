@@ -44,6 +44,7 @@ Generated from an example Jira project and data loaded from [example.csv](data/e
        
 ![](images/cycletime-timeline.png)
 ![](images/cycletime-histogram.png)
+![](images/cycletime-scatterplot.png)
 ![](images/throughput-timeline.png)
 ![](images/throughput-histogram.png)
 ![](images/burndown-timeline.png)
